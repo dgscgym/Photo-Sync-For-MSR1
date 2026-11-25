@@ -1,0 +1,10 @@
+{
+  "executable": "snapraid",
+  "snapraid_config": "/etc/snapraid.conf",
+  "interval_seconds": 3600,
+  "timeout_seconds": 30,
+  "mounts": [
+    {"path": "/mnt/photos-data1", "identity": "photos-data1"},
+    {"path": "/mnt/photos-parity1", "identity": "photos-parity1"}
+  ]
+}

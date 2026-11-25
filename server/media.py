@@ -41,7 +41,7 @@ class Media:
                 CREATE TABLE IF NOT EXISTS live_pairs(
                     photo TEXT PRIMARY KEY, video TEXT NOT NULL);
                 DELETE FROM schema_version;
-                INSERT INTO schema_version VALUES(2);
+                INSERT INTO schema_version VALUES(3);
             ''')
 
     def session(self, uid):
@@ -70,6 +70,7 @@ class Media:
                 h.send(403, {'error': '不允许跨站请求'}); return True
             if h.command == 'POST' and path == '/api/v1/uploads':
                 data = self.json_body(h)
+                h.audit_context = {key:data[key] for key in ('name','size') if key in data}
                 size = data.get('size')
                 if type(size) is not int or not 0 < size <= MAX_FILE:
                     h.send(413, {'error': '文件必须在 1 字节至 10 GiB 之间'}); return True
@@ -99,8 +100,10 @@ class Media:
             uid, complete = match.groups()
             with self.lock:
                 session = self.session(uid)
+                h.audit_context = {"name":session["name"], "size":session["size"], "offset":session["offset"]}
                 part = self.parts / uid
                 if h.command == 'GET' and not complete:
+                    self.store.log('upload', 'info', 'resume_queried', uid, '查询上传进度', {'name':session['name'], 'offset':session['offset'], 'size':session['size']})
                     h.send(200, session); return True
                 if h.command == 'DELETE' and not complete:
                     if not session['sha256']:

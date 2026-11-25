@@ -1,8 +1,8 @@
 const $ = id => document.getElementById(id);
 let busy = false;
 const bytes = n => n >= 1024 ** 3 ? (n / 1024 ** 3).toFixed(2) + ' GiB' : n < 1048576 ? (n / 1024).toFixed(1) + ' KiB' : (n / 1048576).toFixed(1) + ' MiB';
-const names = {library: '照片库', people: '人物相册', backup: '加密备份', activity: '活动记录'};
-const titles = {library: '你的照片，井然有序。', people: '熟悉的面孔，珍藏的回忆。', backup: '每一份回忆，都值得保护。', activity: '每一次收藏，都有迹可循。'};
+const names = {library: '照片库', people: '人物相册', backup: '加密备份', activity: '日志中心', snapraid: '多盘保护'};
+const titles = {library: '你的照片，井然有序。', people: '熟悉的面孔，珍藏的回忆。', backup: '每一份回忆，都值得保护。', activity: '每一次操作，都有迹可循。', snapraid: '让保护状态，始终清晰。'};
 for (const button of document.querySelectorAll('nav button')) button.onclick = () => {
   for (const key of Object.keys(names)) $(key).hidden = key !== button.dataset.view;
   document.querySelector('nav .active').classList.remove('active'); button.classList.add('active');
@@ -25,14 +25,8 @@ async function refresh() {
     name.textContent = (photo.live_video ? '◎ LIVE · ' : '') + photo.name; meta.textContent = bytes(photo.size) + ' · ' + new Date(photo.created_at).toLocaleDateString();
     detail.append(name, meta); card.append(image, detail); card.onclick = () => openMedia(photo); $('grid').append(card);
   }
-  $('events').replaceChildren();
-  for (const event of state.events) {
-    const row = document.createElement('div'); row.className = 'event';
-    const label = document.createElement('strong'), time = document.createElement('span');
-    label.textContent = (event.kind === 'duplicate' ? '重复文件已拦截' : '原片已保存') + ' · ' + event.sha256.slice(0, 12);
-    time.textContent = new Date(event.created_at).toLocaleString(); row.append(label, time); $('events').append(row);
-  }
-  if (!state.events.length) $('events').textContent = '还没有上传活动。';
+  await loadLogs();
+  await refreshStorage();
 }
 async function api(path, options = {}) {
   const response = await fetch(path, options), data = await response.json();
@@ -138,3 +132,62 @@ for (const type of ['dragover', 'dragleave', 'drop']) $('drop').addEventListener
 });
 $('close').onclick = () => $('preview').close();
 refresh().catch(error => { $('notice').textContent = error.message + '，请刷新重试。'; });
+
+const stateNames = {unknown:'状态未知', warning:'需要关注', critical:'严重异常', healthy:'正常'};
+let logRows = [], logBefore = null;
+function renderLogs(target, rows) {
+  target.replaceChildren();
+  if (!rows.length) { target.textContent = '暂无日志记录。'; return; }
+  for (const log of rows) {
+    const details = document.createElement('details'); details.className = 'log-row ' + log.level;
+    const summary = document.createElement('summary');
+    summary.textContent = `${new Date(log.created_at).toLocaleString()} · ${log.category === 'upload' ? '上传' : 'SnapRAID'} · ${log.level.toUpperCase()} · ${log.message}`;
+    const meta = document.createElement('p'); meta.textContent = `#${log.id} · ${log.action} · 任务 ${log.task_id || '—'}`;
+    const pre = document.createElement('pre'); pre.textContent = JSON.stringify(log.details, null, 2);
+    details.append(summary, meta, pre); target.append(details);
+  }
+}
+async function loadLogs(append = false) {
+  const query = new URLSearchParams({category:$('log-category').value, level:$('log-level').value});
+  if (append && logBefore) query.set('before', logBefore);
+  const result = await api('/api/v1/logs?' + query);
+  logRows = append ? logRows.concat(result.items) : result.items;
+  logBefore = result.next_before;
+  renderLogs($('events'), logRows); $('more-logs').hidden = !logBefore;
+}
+async function refreshStorage() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const state = await api('/api/v1/snapraid', {signal:controller.signal});
+    const label = stateNames[state.state] || '状态未知';
+    $('storage-alert').className = 'storage-alert ' + state.state;
+    $('storage-alert').textContent = `⚠ SnapRAID · ${label}：${state.message}` + (state.acknowledged ? '（已知晓，异常仍未解除）' : '');
+    $('storage-title').textContent = label + (state.running ? ' · 检查中' : '');
+    $('storage-message').textContent = state.message;
+    $('storage-time').textContent = `最近检查：${state.checked_at ? new Date(state.checked_at).toLocaleString() : '尚未检查'} · 周期 ${state.interval_seconds} 秒`;
+    $('check-storage').disabled = state.running;
+    $('ack-storage').disabled = !!state.acknowledged;
+    const result = await api('/api/v1/logs?category=snapraid', {signal:controller.signal}); renderLogs($('storage-logs'), result.items);
+  } catch (error) {
+    $('storage-alert').className = 'storage-alert unknown';
+    $('storage-alert').textContent = '⚠ 无法获取多盘保护状态，请检查服务连接；上次状态不能视为当前状态。';
+  } finally { clearTimeout(timer); }
+}
+$('check-storage').onclick = async () => {
+  try { await api('/api/v1/snapraid/check', {method:'POST'}); await refreshStorage(); }
+  catch (error) { $('notice').textContent = '检查请求失败：' + error.message; }
+};
+$('ack-storage').onclick = async () => {
+  try { await api('/api/v1/snapraid/acknowledge', {method:'POST'}); await refreshStorage(); }
+  catch (error) { $('notice').textContent = error.message; }
+};
+for (const id of ['log-category','log-level']) $(id).onchange = () => loadLogs().catch(error => { $('notice').textContent = error.message; });
+$('refresh-logs').onclick = () => loadLogs().catch(error => { $('notice').textContent = error.message; });
+$('more-logs').onclick = () => loadLogs(true).catch(error => { $('notice').textContent = error.message; });
+$('export-logs').onclick = () => {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(logRows, null, 2)], {type:'application/json'}));
+  const link = document.createElement('a'); link.href = url; link.download = 'photosync-logs.json'; link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+setInterval(refreshStorage, 15000);

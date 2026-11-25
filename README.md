@@ -2,9 +2,11 @@
 
 面向铭凡 MINISFORUM MS-R1（此芯 P1 / ARM64）的私人照片管理与加密云备份项目。
 
-> 当前版本：**0.2.0 媒体上传原型**。已实现最大 10 GiB 分片续传、精确去重、照片/视频预览、显式 Live Photo 配对和活动记录；人脸识别、NPU、加密归档和 115 同步尚未实现。下方需求描述是完整目标，不代表所有功能已完成。
+> 当前版本：**0.3.0 日志与只读监控原型**。已实现最大 10 GiB 分片续传、精确去重、照片/视频预览、显式 Live Photo 配对、持久化日志及 SnapRAID 只读监控 / 告警；人脸识别、NPU、加密归档和 115 同步尚未实现。下方需求描述是完整目标，不代表所有功能已完成。
 
 详见 [大视频、Live Photo 与 MS-R1 验证说明](docs/MEDIA.md)。FFmpeg 为可选依赖，软件转码尚未在 MS-R1 实机验证。
+
+[日志与 SnapRAID 只读监控说明](docs/LOGGING.md)：日志已实现；SnapRAID sync / scrub / fix 尚未接入，命令成功不会被当作完整健康验证。
 
 ## 快速启动原型
 
@@ -79,7 +81,7 @@ python3 -m unittest discover -s tests -v
 - 115 是加密备份目的地；加密包内的照片不能依赖 115 直接在线浏览。
 - 加密密钥需要独立备份，恢复流程不能只依赖原 MS-R1 上的数据库和配置。
 
-### 2.4 SnapRAID 本地多盘保护（新增需求，尚未实现）
+### 2.4 SnapRAID 本地多盘保护（只读检查与日志已实现，完整集成待开发）
 
 在工具中集成 SnapRAID 的配置检查、状态查看、异步同步与校验任务，并与 115 加密云备份分别展示结果。
 
@@ -131,7 +133,7 @@ python3 -m unittest discover -s tests -v
 - [ ] 验证检查失败、超时、缺盘、scrub 错误、检查过期、服务离线、告警确认、重启和恢复场景；验证前端横幅及时更新，未解除异常不显示正常。
 - [ ] 使用可丢弃测试数据做恢复演练，验证恢复照片 / 视频的 SHA256 与原片一致；不得在真实照片盘上自动执行破坏性测试。
 
-参考：[SnapRAID CLI 手册](https://www.snapraid.it/manual)、[官方 daemon 手册](https://www.snapraid.it/manual-daemon)。以上为待实现与待验证需求，目前没有操作或配置实际磁盘。
+参考：[SnapRAID CLI 手册](https://www.snapraid.it/manual)、[官方 daemon 手册](https://www.snapraid.it/manual-daemon)。以上为完整需求；0.3.0 已提供只读检查与日志子集，限制见 LOGGING 文档。尚未操作或配置实际磁盘。
 
 ## 3. 部署与 NPU：待验证的技术方向
 
