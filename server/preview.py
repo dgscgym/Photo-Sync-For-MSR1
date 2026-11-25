@@ -39,7 +39,11 @@ class Previews:
     def run(self, digest, path, video):
         temporary = path.with_name(path.stem + '.partial' + path.suffix)
         self.states[digest] = 'processing'
-        command = ['ffmpeg', '-nostdin', '-v', 'error', '-y', '-i', str(self.store.originals / digest)]
+        source=self.store.resolve(digest)
+        if source is None:
+            self.states[digest]='failed'
+            return
+        command = ['ffmpeg', '-nostdin', '-v', 'error', '-y', '-i', str(source)]
         if video:
             command += ['-map', '0:v:0', '-map', '0:a:0?', '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '25', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-movflags', '+faststart', '-threads', '2']
         else:

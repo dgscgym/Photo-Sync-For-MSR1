@@ -13,6 +13,7 @@ from urllib.parse import urlsplit, unquote, parse_qs
 from .media import Media, serve_file
 from .preview import Previews
 from .monitor import Monitor
+from .library import Library
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = (ROOT / 'VERSION').read_text().strip()
@@ -37,10 +38,22 @@ class Store:
         self.originals = self.directory / 'originals'
         self.originals.mkdir(parents=True, exist_ok=True)
         self.lock = threading.Lock()
+        # Refuse future schemas before any metadata changes.
+        with self.connect() as db:
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='schema_version'").fetchone():
+                current=db.execute('SELECT MAX(version) FROM schema_version').fetchone()[0]
+                if current and current > 4:
+                    raise ValueError('数据库来自较新版本，请使用兼容版本；禁止自动降级')
+                if current and current < 4:
+                    import time
+                    backups=self.directory/'metadata-backups'
+                    backups.mkdir(exist_ok=True)
+                    with sqlite3.connect(backups / f'schema-{current}-{time.time_ns()}.sqlite3') as backup:
+                        db.backup(backup)
         with self.connect() as db:
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS schema_version(version INTEGER PRIMARY KEY);
-                INSERT OR IGNORE INTO schema_version VALUES(1);
+                INSERT INTO schema_version SELECT 1 WHERE NOT EXISTS(SELECT 1 FROM schema_version);
                 CREATE TABLE IF NOT EXISTS photos(
                     sha256 TEXT PRIMARY KEY, name TEXT NOT NULL,
                     size INTEGER NOT NULL, media_type TEXT NOT NULL,
@@ -90,15 +103,33 @@ class Store:
             row['details'] = json.loads(row['details'])
         return {'items':rows, 'next_before':rows[-1]['id'] if len(rows)==100 else None}
 
+    def resolve(self, sha256):
+        managed=self.originals / sha256
+        if managed.is_file(): return managed
+        library=getattr(self,'library',None)
+        if not library:return None
+        with self.connect() as db:
+            rows=db.execute('SELECT l.*,s.path FROM file_locations l JOIN library_sources s ON s.id=l.source_id WHERE l.sha256=? AND l.available=1',(sha256,)).fetchall()
+        for row in rows:
+            try:
+                root=library.allowed(row['path']); candidate=root / row['relative_path']
+                if candidate.is_symlink():continue
+                path=candidate.resolve(strict=True)
+                if root not in path.parents:continue
+                stat=path.stat()
+                if stat.st_size==row['size'] and stat.st_mtime_ns==row['mtime_ns']:return path
+            except (OSError,ValueError):continue
+        return None
+
     def save(self, temporary, sha256, name, size, media_type):
         # Serialize publication and metadata insertion; SQLite UNIQUE is a second guard.
         with self.lock, self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             duplicate = db.execute('SELECT 1 FROM photos WHERE sha256=?', (sha256,)).fetchone() is not None
             now = datetime.now(timezone.utc).isoformat()
-            if not duplicate:
+            if not duplicate or self.resolve(sha256) is None:
                 os.replace(temporary, self.originals / sha256)
-                db.execute('INSERT INTO photos VALUES(?,?,?,?,?)', (sha256, name, size, media_type, now))
+                db.execute('INSERT OR IGNORE INTO photos VALUES(?,?,?,?,?)', (sha256, name, size, media_type, now))
             db.execute('INSERT INTO events(sha256,kind,created_at) VALUES(?,?,?)',
                        (sha256, 'duplicate' if duplicate else 'uploaded', now))
             return duplicate
@@ -112,20 +143,23 @@ class Store:
             pairs = {r['photo']: r['video'] for r in db.execute('SELECT * FROM live_pairs')}
         for photo in photos:
             photo['live_video'] = pairs.get(photo['sha256'])
+            photo['available'] = self.resolve(photo['sha256']) is not None
         return {'version': VERSION, 'photos': photos, 'events': events,
                 'stats': {'photos': len(photos), 'bytes': sum(p['size'] for p in photos), 'duplicates': duplicates},
                 'capabilities': {'face_recognition': 'not_configured', 'npu': 'not_verified',
                                  'encryption': 'not_implemented', 'cloud115': 'not_connected'}}
 
 
-def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None):
+def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, library_bases=(), scan_interval=300):
     store = Store(directory)
     media = Media(store)
+    library = Library(store, library_bases, scan_interval)
+    store.library = library
     previews = Previews(store)
     monitor = Monitor(store, snapraid_config)
     with store.connect() as db:
         db.execute("DELETE FROM schema_version")
-        db.execute("INSERT INTO schema_version VALUES(3)")
+        db.execute("INSERT INTO schema_version VALUES(4)")
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -168,6 +202,8 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None):
         do_DELETE = do_PATCH
 
         def do_GET(self):
+            if library.route(self):
+                return
             if media.route(self):
                 return
             path = urlsplit(self.path).path
@@ -196,9 +232,10 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None):
                     return self.send(404, {'error': '照片不存在'})
                 with store.connect() as db:
                     photo = db.execute('SELECT * FROM photos WHERE sha256=?', (digest,)).fetchone()
-                if photo is None or not (store.originals / digest).is_file():
+                target = store.resolve(digest) if photo else None
+                if target is None:
                     return self.send(404, {'error': '照片不存在'})
-                return serve_file(self, store.originals / digest, photo['media_type'], self.command == 'HEAD')
+                return serve_file(self, target, photo['media_type'], self.command == 'HEAD')
             assets = {'/': ('index.html', 'text/html; charset=utf-8'),
                       '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
                       '/style.css': ('style.css', 'text/css; charset=utf-8')}
@@ -208,6 +245,8 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None):
             return self.send(404, {'error': '接口不存在'})
 
         def do_POST(self):
+            if library.route(self):
+                return
             if urlsplit(self.path).path in ('/api/v1/snapraid/check','/api/v1/snapraid/acknowledge'):
                 if self.headers.get('Sec-Fetch-Site') == 'cross-site':
                     return self.send(403, {'error':'不允许跨站请求'})
@@ -271,11 +310,13 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None):
 
     class Server(ThreadingHTTPServer):
         def server_close(self):
+            library.close()
             monitor.close()
             previews.pool.shutdown(wait=True)
             super().server_close()
     server = Server((host, port), Handler)
     server.monitor = monitor
+    server.library = library
     return server
 
 
@@ -285,8 +326,10 @@ if __name__ == '__main__':
     parser.add_argument('--port', type=int, default=8080)
     parser.add_argument('--data', default=str(ROOT / 'data'))
     parser.add_argument('--snapraid-monitor-config', help='只读检查配置 JSON 路径')
+    parser.add_argument('--library-base', action='append', default=[], help='允许登记的媒体根目录，可重复')
+    parser.add_argument('--scan-interval', type=int, default=300)
     args = parser.parse_args()
-    server = make_server(args.data, args.host, args.port, args.snapraid_monitor_config)
+    server = make_server(args.data, args.host, args.port, args.snapraid_monitor_config, args.library_base, args.scan_interval)
     print(f'PhotoSync {VERSION}: http://{args.host}:{args.port}', flush=True)
     try:
         server.serve_forever()

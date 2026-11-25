@@ -40,8 +40,7 @@ class Media:
                     sha256 TEXT, duplicate INTEGER);
                 CREATE TABLE IF NOT EXISTS live_pairs(
                     photo TEXT PRIMARY KEY, video TEXT NOT NULL);
-                DELETE FROM schema_version;
-                INSERT INTO schema_version VALUES(3);
+
             ''')
 
     def session(self, uid):

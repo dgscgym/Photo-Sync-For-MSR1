@@ -1,8 +1,8 @@
 const $ = id => document.getElementById(id);
 let busy = false;
 const bytes = n => n >= 1024 ** 3 ? (n / 1024 ** 3).toFixed(2) + ' GiB' : n < 1048576 ? (n / 1024).toFixed(1) + ' KiB' : (n / 1048576).toFixed(1) + ' MiB';
-const names = {library: '照片库', people: '人物相册', backup: '加密备份', activity: '日志中心', snapraid: '多盘保护'};
-const titles = {library: '你的照片，井然有序。', people: '熟悉的面孔，珍藏的回忆。', backup: '每一份回忆，都值得保护。', activity: '每一次操作，都有迹可循。', snapraid: '让保护状态，始终清晰。'};
+const names = {library: '照片库', people: '人物相册', backup: '加密备份', activity: '日志中心', snapraid: '多盘保护', setup: '初始化 / 目录'};
+const titles = {library: '你的照片，井然有序。', people: '熟悉的面孔，珍藏的回忆。', backup: '每一份回忆，都值得保护。', activity: '每一次操作，都有迹可循。', snapraid: '让保护状态，始终清晰。', setup: '照片不用搬家，回忆随时可见。'};
 for (const button of document.querySelectorAll('nav button')) button.onclick = () => {
   for (const key of Object.keys(names)) $(key).hidden = key !== button.dataset.view;
   document.querySelector('nav .active').classList.remove('active'); button.classList.add('active');
@@ -22,7 +22,7 @@ async function refresh() {
     if (isVideo) { image.className = 'video-cover'; image.textContent = '▷ 视频'; }
     else { image.src = '/api/v1/photos/' + photo.sha256; image.alt = photo.name; image.loading = 'lazy'; image.onerror = () => { image.alt = '此图片需生成兼容预览'; }; }
     const detail = document.createElement('div'), name = document.createElement('strong'), meta = document.createElement('small');
-    name.textContent = (photo.live_video ? '◎ LIVE · ' : '') + photo.name; meta.textContent = bytes(photo.size) + ' · ' + new Date(photo.created_at).toLocaleDateString();
+    name.textContent = (photo.available === false ? '离线 · ' : '') + (photo.live_video ? '◎ LIVE · ' : '') + photo.name; meta.textContent = bytes(photo.size) + ' · ' + new Date(photo.created_at).toLocaleDateString();
     detail.append(name, meta); card.append(image, detail); card.onclick = () => openMedia(photo); $('grid').append(card);
   }
   await loadLogs();
@@ -141,7 +141,7 @@ function renderLogs(target, rows) {
   for (const log of rows) {
     const details = document.createElement('details'); details.className = 'log-row ' + log.level;
     const summary = document.createElement('summary');
-    summary.textContent = `${new Date(log.created_at).toLocaleString()} · ${log.category === 'upload' ? '上传' : 'SnapRAID'} · ${log.level.toUpperCase()} · ${log.message}`;
+    summary.textContent = `${new Date(log.created_at).toLocaleString()} · ${({upload:'上传',snapraid:'SnapRAID',library:'目录导入'})[log.category] || log.category} · ${log.level.toUpperCase()} · ${log.message}`;
     const meta = document.createElement('p'); meta.textContent = `#${log.id} · ${log.action} · 任务 ${log.task_id || '—'}`;
     const pre = document.createElement('pre'); pre.textContent = JSON.stringify(log.details, null, 2);
     details.append(summary, meta, pre); target.append(details);
@@ -191,3 +191,52 @@ $('export-logs').onclick = () => {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 setInterval(refreshStorage, 15000);
+
+let libraryStamp = '';
+async function refreshLibrary(first = false) {
+  try {
+    const state = await api('/api/v1/library');
+    $('library-bases').textContent = state.bases.length ? '服务端已授权目录：' + state.bases.join('、') : '尚无授权目录。请启动服务时添加 --library-base /容器内媒体路径；也可先直接上传。';
+    $('source-list').replaceChildren();
+    for (const source of state.sources) {
+      const card = document.createElement('div'); card.className = 'monitor-card';
+      const title = document.createElement('h3'); title.textContent = source.name;
+      const path = document.createElement('p'); path.textContent = source.path;
+      const status = document.createElement('p'); status.textContent = `${source.state} · ${source.message} · 最近扫描 ${source.last_scan ? new Date(source.last_scan).toLocaleString() : '尚无'}`;
+      const bind = document.createElement('button'); bind.textContent = '磁盘路径变了？重新绑定';
+      bind.onclick = () => { $('source-id').value = source.id; $('source-path').value = source.path; $('source-name').value = source.name; $('source-path').focus(); };
+      card.append(title,path,status,bind); $('source-list').append(card);
+    }
+    $('library-scan').disabled = state.scanning;
+    const stamp = JSON.stringify(state.sources.map(s => [s.id,s.last_scan,s.state]));
+    if (libraryStamp && stamp !== libraryStamp) await refresh();
+    libraryStamp = stamp;
+    if (first && !state.setup_complete) document.querySelector('[data-view="setup"]').click();
+  } catch (error) { $('library-message').textContent = '目录状态读取失败：' + error.message; }
+}
+$('source-add').onclick = async () => {
+  $('source-add').disabled = true;
+  try {
+    await api('/api/v1/library/sources', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:$('source-path').value,name:$('source-name').value,source_id:$('source-id').value || null})});
+    $('source-id').value = ''; $('source-path').value = ''; $('source-name').value = '';
+    $('library-message').textContent = '目录已登记，正在后台扫描；不会复制、移动或删除原文件。';
+    await refreshLibrary(); setTimeout(refreshLibrary, 1500);
+  } catch (error) { $('library-message').textContent = error.message; }
+  finally { $('source-add').disabled = false; }
+};
+$('library-scan').onclick = async () => {
+  try { await api('/api/v1/library/scan',{method:'POST'}); $('library-message').textContent = '扫描已请求，请稍候。'; setTimeout(refreshLibrary,1500); }
+  catch (error) { $('library-message').textContent = error.message; }
+};
+$('setup-finish').onclick = async () => {
+  try { await api('/api/v1/library/finish',{method:'POST'}); document.querySelector('[data-view="library"]').click(); await refresh(); }
+  catch (error) { $('library-message').textContent = error.message; }
+};
+$('library-export').onclick = async () => {
+  try {
+    const data = await api('/api/v1/library/manifest');
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
+    const link=document.createElement('a');link.href=url;link.download='photosync-library-v1.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  } catch(error) { $('library-message').textContent=error.message; }
+};
+refreshLibrary(true); setInterval(() => refreshLibrary(),15000);
