@@ -14,6 +14,8 @@ from .media import Media, serve_file
 from .preview import Previews
 from .monitor import Monitor
 from .library import Library
+from .setup import Setup
+from .auth import Auth
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = (ROOT / 'VERSION').read_text().strip()
@@ -42,9 +44,9 @@ class Store:
         with self.connect() as db:
             if db.execute("SELECT 1 FROM sqlite_master WHERE name='schema_version'").fetchone():
                 current=db.execute('SELECT MAX(version) FROM schema_version').fetchone()[0]
-                if current and current > 4:
+                if current and current > 5:
                     raise ValueError('数据库来自较新版本，请使用兼容版本；禁止自动降级')
-                if current and current < 4:
+                if current and current < 5:
                     import time
                     backups=self.directory/'metadata-backups'
                     backups.mkdir(exist_ok=True)
@@ -150,16 +152,19 @@ class Store:
                                  'encryption': 'not_implemented', 'cloud115': 'not_connected'}}
 
 
-def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, library_bases=(), scan_interval=300):
+def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, library_bases=(), scan_interval=300, storage_bases=(), snapraid_config_bases=(), secure_cookies=False):
     store = Store(directory)
     media = Media(store)
     library = Library(store, library_bases, scan_interval)
     store.library = library
     previews = Previews(store)
-    monitor = Monitor(store, snapraid_config)
+    persisted=store.directory/'snapraid-monitor.json'
+    monitor = Monitor(store, snapraid_config or (str(persisted) if persisted.exists() else None))
+    auth=Auth(store,secure_cookies)
+    setup = Setup(store,library,monitor,storage_bases,snapraid_config_bases, bool(snapraid_config))
     with store.connect() as db:
         db.execute("DELETE FROM schema_version")
-        db.execute("INSERT INTO schema_version VALUES(4)")
+        db.execute("INSERT INTO schema_version VALUES(5)")
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -196,12 +201,18 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, li
             self.do_GET()
 
         def do_PATCH(self):
+            if auth.gate(self):
+                return
             if not media.route(self):
                 self.send(404, {'error': '接口不存在'})
 
         do_DELETE = do_PATCH
 
         def do_GET(self):
+            if auth.gate(self):
+                return
+            if setup.route(self):
+                return
             if library.route(self):
                 return
             if media.route(self):
@@ -236,7 +247,12 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, li
                 if target is None:
                     return self.send(404, {'error': '照片不存在'})
                 return serve_file(self, target, photo['media_type'], self.command == 'HEAD')
-            assets = {'/': ('index.html', 'text/html; charset=utf-8'),
+            if path=='/login':
+                return self.send(200,(ROOT/'client'/'login.html').read_bytes(),'text/html; charset=utf-8')
+            if path.startswith('/setup') and path in ('/setup','/setup/welcome','/setup/library','/setup/snapraid','/setup/review'):
+                return self.send(200,(ROOT/'client'/'setup.html').read_bytes(),'text/html; charset=utf-8')
+            assets = {'/login.js':('login.js','text/javascript; charset=utf-8'), '/setup.js': ('setup.js','text/javascript; charset=utf-8'),
+                      '/setup.css': ('setup.css','text/css; charset=utf-8'), '/': ('index.html', 'text/html; charset=utf-8'),
                       '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
                       '/style.css': ('style.css', 'text/css; charset=utf-8')}
             if path in assets:
@@ -245,6 +261,10 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, li
             return self.send(404, {'error': '接口不存在'})
 
         def do_POST(self):
+            if auth.gate(self):
+                return
+            if setup.route(self):
+                return
             if library.route(self):
                 return
             if urlsplit(self.path).path in ('/api/v1/snapraid/check','/api/v1/snapraid/acknowledge'):
@@ -315,6 +335,7 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, li
             previews.pool.shutdown(wait=True)
             super().server_close()
     server = Server((host, port), Handler)
+    server.auth = auth
     server.monitor = monitor
     server.library = library
     return server
@@ -328,8 +349,11 @@ if __name__ == '__main__':
     parser.add_argument('--snapraid-monitor-config', help='只读检查配置 JSON 路径')
     parser.add_argument('--library-base', action='append', default=[], help='允许登记的媒体根目录，可重复')
     parser.add_argument('--scan-interval', type=int, default=300)
+    parser.add_argument('--storage-base', action='append', default=[], help='SnapRAID 磁盘目录授权范围')
+    parser.add_argument('--snapraid-config-base', action='append', default=[], help='现有 SnapRAID 配置文件授权范围')
+    parser.add_argument('--secure-cookies', action='store_true', help='HTTPS 部署时使用 Secure 会话 Cookie')
     args = parser.parse_args()
-    server = make_server(args.data, args.host, args.port, args.snapraid_monitor_config, args.library_base, args.scan_interval)
+    server = make_server(args.data, args.host, args.port, args.snapraid_monitor_config, args.library_base, args.scan_interval, args.storage_base, args.snapraid_config_base, args.secure_cookies)
     print(f'PhotoSync {VERSION}: http://{args.host}:{args.port}', flush=True)
     try:
         server.serve_forever()

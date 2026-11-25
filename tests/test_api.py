@@ -11,6 +11,19 @@ from server.app import make_server
 
 PNG = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1sAAAAASUVORK5CYII=')
 
+def authenticate(server):
+    def call(path, data, cookie=''):
+        client=http.client.HTTPConnection('127.0.0.1',server.server_port)
+        client.request('POST',path,json.dumps(data).encode(),{'Content-Type':'application/json','Cookie':cookie})
+        response=client.getresponse();response.read();result=response.getheader('Set-Cookie','').split(';')[0];client.close();return result
+    credentials={'username':'test-admin','password':'test-password-12345'}
+    cookie=call('/api/v1/auth/login' if server.auth.account() else '/api/v1/auth/bootstrap',credentials)
+    if not server.auth.complete():
+        call('/api/v1/setup/snapraid',{'skip':True},cookie)
+        call('/api/v1/setup/finish',{},cookie)
+        cookie=call('/api/v1/auth/login',credentials)
+    return cookie
+
 class ApiTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -20,6 +33,7 @@ class ApiTests(unittest.TestCase):
         self.server = make_server(self.tmp.name, port=0)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
+        self.cookie=authenticate(self.server)
 
     def stop(self):
         self.server.shutdown(); self.server.server_close(); self.thread.join()
@@ -29,7 +43,7 @@ class ApiTests(unittest.TestCase):
 
     def request(self, method, path, data=None, headers=None):
         client = http.client.HTTPConnection('127.0.0.1', self.server.server_port)
-        client.request(method, path, data, headers or {})
+        client.request(method, path, data, dict({'Cookie':self.cookie}, **(headers or {})))
         result = client.getresponse(); status = result.status; body = result.read(); client.close()
         return status, body
 

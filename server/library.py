@@ -67,23 +67,35 @@ class Library:
                 'sources': self.sources(), 'scanning':self.lock.locked(), 'interval_seconds':self.interval}
 
     def add(self, path, name='', source_id=None):
-        root = self.allowed(path)
+        return self.add_many([{'path':path,'name':name,'source_id':source_id}])[0]
+
+    def add_many(self, entries):
+        if not isinstance(entries,list) or not 1 <= len(entries) <= 200:
+            raise ValueError('每批支持 1–200 个目录')
+        prepared=[]
+        for entry in entries:
+            root=self.allowed(entry['path'])
+            name=entry.get('name','')
+            if not isinstance(name,str):raise ValueError('名称无效')
+            prepared.append((root,name,entry.get('source_id')))
+        identifiers=[]
         with self.lock, self.store.connect() as db:
-            # Disallow overlapping roots so a single tree has one stable logical source.
-            for row in db.execute('SELECT id,path FROM library_sources'):
-                existing = Path(row['path'])
-                if row['id'] != source_id and (root == existing or root in existing.parents or existing in root.parents):
-                    raise ValueError('目录已登记或与现有目录重叠')
-            if source_id:
-                if not db.execute('SELECT 1 FROM library_sources WHERE id=?',(source_id,)).fetchone():
-                    raise ValueError('来源不存在')
-                db.execute("UPDATE library_sources SET path=?,state='pending',message='路径已重新绑定，等待扫描' WHERE id=?", (str(root),source_id))
-            else:
-                source_id = uuid.uuid4().hex
-                db.execute('INSERT INTO library_sources VALUES(?,?,?,?,?,?)', (source_id,name[:200] or root.name,str(root),'pending',None,'等待扫描'))
-        self.store.log('library','info','source_bound',source_id,'已登记或重新绑定现有目录',{'path':str(root)})
+            existing={r['id']:Path(r['path']) for r in db.execute('SELECT id,path FROM library_sources')}
+            for root,name,sid in prepared:
+                if sid and sid not in existing:raise ValueError('来源不存在')
+                for other_id,path in existing.items():
+                    if other_id != sid and (root==path or root in path.parents or path in root.parents):
+                        raise ValueError('目录重复或重叠')
+                if sid:
+                    db.execute("UPDATE library_sources SET path=?,state='pending',message='路径已重新绑定，等待扫描' WHERE id=?",(str(root),sid))
+                else:
+                    sid=uuid.uuid4().hex
+                    db.execute('INSERT INTO library_sources VALUES(?,?,?,?,?,?)',(sid,name[:200] or root.name,str(root),'pending',None,'等待扫描'))
+                existing[sid]=root;identifiers.append(sid)
+        for sid,(root,_,_) in zip(identifiers,prepared):
+            self.store.log('library','info','source_bound',sid,'已登记或重新绑定目录',{'path':str(root)})
         self.trigger()
-        return source_id
+        return identifiers
 
     def scan(self):
         if not self.lock.acquire(blocking=False):
@@ -163,11 +175,12 @@ class Library:
                 if h.headers.get('Sec-Fetch-Site')=='cross-site':h.send(403,{'error':'不允许跨站请求'});return True
                 if path=='/api/v1/library/scan':h.send(202 if self.trigger() else 409,{'queued':True});return True
                 if path=='/api/v1/library/finish':
-                    with self.store.connect() as db:db.execute("INSERT OR REPLACE INTO app_settings VALUES('setup_complete','true')")
-                    h.send(200,{'setup_complete':True});return True
+                    h.send(410,{'error':'请使用独立初始化流程完成设置'});return True
                 length=int(h.headers.get('Content-Length','0'))
-                if not 0<length<=8192:raise ValueError('配置请求过大或为空')
+                if not 0<length<=131072:raise ValueError('配置请求过大或为空')
                 data=json.loads(h.rfile.read(length))
+                if path=='/api/v1/library/sources/batch':
+                    ids=self.add_many(data['sources']);h.send(201,{'ids':ids});return True
                 if path=='/api/v1/library/sources':
                     sid=self.add(data['path'],data.get('name',''),data.get('source_id'))
                     h.send(201,{'id':sid});return True

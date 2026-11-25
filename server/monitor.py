@@ -41,6 +41,24 @@ class Monitor:
             self.thread = threading.Thread(target=self.loop, daemon=True)
             self.thread.start()
 
+    def configure(self, settings):
+        with self.trigger_lock:
+            if self.lock.locked():raise ValueError('检查运行中，请稍后重试')
+            self.close()
+            if (self.thread and self.thread.is_alive()) or (self.manual_thread and self.manual_thread.is_alive()):
+                raise ValueError('旧检查未停止')
+            path=self.store.directory/'snapraid-monitor.json'
+            temporary=path.with_suffix('.tmp')
+            temporary.write_text(json.dumps(settings,ensure_ascii=False,indent=2))
+            temporary.replace(path)
+            self.config=str(path);self.settings=settings
+            self.interval=settings['interval_seconds'];self.timeout=settings['timeout_seconds']
+            with self.store.connect() as db:
+                db.execute("UPDATE monitor_state SET state='unknown',message='配置已更新，等待首次检查',checked_at=NULL,acknowledged=0 WHERE id=1")
+            self.stop_event=threading.Event()
+            self.thread=threading.Thread(target=self.loop,daemon=True)
+            self.thread.start()
+
     def snapshot(self):
         with self.store.connect() as db:
             data = dict(db.execute('SELECT * FROM monitor_state WHERE id=1').fetchone())

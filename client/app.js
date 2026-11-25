@@ -1,8 +1,8 @@
 const $ = id => document.getElementById(id);
 let busy = false;
 const bytes = n => n >= 1024 ** 3 ? (n / 1024 ** 3).toFixed(2) + ' GiB' : n < 1048576 ? (n / 1024).toFixed(1) + ' KiB' : (n / 1048576).toFixed(1) + ' MiB';
-const names = {library: '照片库', people: '人物相册', backup: '加密备份', activity: '日志中心', snapraid: '多盘保护', setup: '初始化 / 目录'};
-const titles = {library: '你的照片，井然有序。', people: '熟悉的面孔，珍藏的回忆。', backup: '每一份回忆，都值得保护。', activity: '每一次操作，都有迹可循。', snapraid: '让保护状态，始终清晰。', setup: '照片不用搬家，回忆随时可见。'};
+const names = {library: '照片库', people: '人物相册', backup: '加密备份', activity: '日志中心', snapraid: '多盘保护', directories: '目录管理'};
+const titles = {library: '你的照片，井然有序。', people: '熟悉的面孔，珍藏的回忆。', backup: '每一份回忆，都值得保护。', activity: '每一次操作，都有迹可循。', snapraid: '让保护状态，始终清晰。', directories: '照片不用搬家，回忆随时可见。'};
 for (const button of document.querySelectorAll('nav button')) button.onclick = () => {
   for (const key of Object.keys(names)) $(key).hidden = key !== button.dataset.view;
   document.querySelector('nav .active').classList.remove('active'); button.classList.add('active');
@@ -30,6 +30,7 @@ async function refresh() {
 }
 async function api(path, options = {}) {
   const response = await fetch(path, options), data = await response.json();
+  if (response.status === 401) { location.replace('/login'); throw new Error('登录已过期'); }
   if (!response.ok) throw new Error(data.error || '请求失败');
   return data;
 }
@@ -211,13 +212,17 @@ async function refreshLibrary(first = false) {
     const stamp = JSON.stringify(state.sources.map(s => [s.id,s.last_scan,s.state]));
     if (libraryStamp && stamp !== libraryStamp) await refresh();
     libraryStamp = stamp;
-    if (first && !state.setup_complete) document.querySelector('[data-view="setup"]').click();
+    if (first && !state.setup_complete) location.replace('/setup/welcome');
   } catch (error) { $('library-message').textContent = '目录状态读取失败：' + error.message; }
 }
 $('source-add').onclick = async () => {
   $('source-add').disabled = true;
   try {
-    await api('/api/v1/library/sources', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:$('source-path').value,name:$('source-name').value,source_id:$('source-id').value || null})});
+    const paths=$('source-path').value.split('\n').map(s=>s.trim()).filter(Boolean);
+    if(!paths.length)throw new Error('请输入目录');
+    const rebind=$('source-id').value;
+    if(rebind && paths.length!==1)throw new Error('重新绑定仅能指定一个目录');
+    await api(rebind?'/api/v1/library/sources':'/api/v1/library/sources/batch', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(rebind?{path:paths[0],source_id:rebind}:{sources:paths.map(path=>({path}))})});
     $('source-id').value = ''; $('source-path').value = ''; $('source-name').value = '';
     $('library-message').textContent = '目录已登记，正在后台扫描；不会复制、移动或删除原文件。';
     await refreshLibrary(); setTimeout(refreshLibrary, 1500);
@@ -228,10 +233,6 @@ $('library-scan').onclick = async () => {
   try { await api('/api/v1/library/scan',{method:'POST'}); $('library-message').textContent = '扫描已请求，请稍候。'; setTimeout(refreshLibrary,1500); }
   catch (error) { $('library-message').textContent = error.message; }
 };
-$('setup-finish').onclick = async () => {
-  try { await api('/api/v1/library/finish',{method:'POST'}); document.querySelector('[data-view="library"]').click(); await refresh(); }
-  catch (error) { $('library-message').textContent = error.message; }
-};
 $('library-export').onclick = async () => {
   try {
     const data = await api('/api/v1/library/manifest');
@@ -240,3 +241,5 @@ $('library-export').onclick = async () => {
   } catch(error) { $('library-message').textContent=error.message; }
 };
 refreshLibrary(true); setInterval(() => refreshLibrary(),15000);
+
+$('logout').onclick=async()=>{await api('/api/v1/auth/logout',{method:'POST'});location.replace('/login');};

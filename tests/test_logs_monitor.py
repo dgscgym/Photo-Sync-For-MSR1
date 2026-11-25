@@ -8,15 +8,17 @@ from unittest.mock import patch
 from server.app import Store, make_server
 from server.monitor import Monitor
 import http.client
+from tests.test_api import authenticate
 
 class LogMonitorTests(unittest.TestCase):
     def test_upload_failure_and_restart_logs(self):
         with tempfile.TemporaryDirectory() as directory:
             server = make_server(directory, port=0)
             thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+            cookie=authenticate(server)
             def request(method,path,body=None):
                 c=http.client.HTTPConnection('127.0.0.1',server.server_port)
-                c.request(method,path,body); r=c.getresponse(); status=r.status; data=json.loads(r.read());c.close();return status,data
+                c.request(method,path,body,{"Cookie":cookie}); r=c.getresponse(); status=r.status; data=json.loads(r.read());c.close();return status,data
             try:
                 self.assertEqual(request('POST','/api/v1/photos',b'bad')[0],415)
                 status, result=request('GET','/api/v1/logs?category=upload&level=warning')
@@ -26,9 +28,10 @@ class LogMonitorTests(unittest.TestCase):
                 server.shutdown();server.server_close();thread.join()
             store=Store(directory)
             self.assertEqual(len(store.logs('upload')['items']),1)
+            baseline=len(store.logs('snapraid')['items'])
             for i in range(105):store.log('snapraid','info','test',str(i),'test',{})
             first=store.logs('snapraid');self.assertEqual(len(first['items']),100)
-            second=store.logs('snapraid',first['next_before']);self.assertEqual(len(second['items']),5)
+            second=store.logs('snapraid',first['next_before']);self.assertEqual(len(second['items']),5+baseline)
             self.assertFalse(set(r['id'] for r in first['items']) & set(r['id'] for r in second['items']))
 
     def test_monitor_failure_acknowledgement_and_restart(self):
