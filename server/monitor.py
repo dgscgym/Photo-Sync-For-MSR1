@@ -40,8 +40,6 @@ class Monitor:
         if config:
             self.thread = threading.Thread(target=self.loop, daemon=True)
             self.thread.start()
-        else:
-            self.check()
 
     def snapshot(self):
         with self.store.connect() as db:
