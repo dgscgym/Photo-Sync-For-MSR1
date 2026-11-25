@@ -10,6 +10,8 @@ import threading
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, unquote
+from .media import Media, serve_file
+from .preview import Previews
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = (ROOT / 'VERSION').read_text().strip()
@@ -70,6 +72,10 @@ class Store:
             photos = [dict(row) for row in db.execute('SELECT * FROM photos ORDER BY created_at DESC')]
             events = [dict(row) for row in db.execute('SELECT * FROM events ORDER BY id DESC LIMIT 30')]
             duplicates = db.execute("SELECT count(*) FROM events WHERE kind='duplicate'").fetchone()[0]
+        with self.connect() as db:
+            pairs = {r['photo']: r['video'] for r in db.execute('SELECT * FROM live_pairs')}
+        for photo in photos:
+            photo['live_video'] = pairs.get(photo['sha256'])
         return {'version': VERSION, 'photos': photos, 'events': events,
                 'stats': {'photos': len(photos), 'bytes': sum(p['size'] for p in photos), 'duplicates': duplicates},
                 'capabilities': {'face_recognition': 'not_configured', 'npu': 'not_verified',
@@ -78,6 +84,8 @@ class Store:
 
 def make_server(directory, host='127.0.0.1', port=8080):
     store = Store(directory)
+    media = Media(store)
+    previews = Previews(store)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -96,8 +104,28 @@ def make_server(directory, host='127.0.0.1', port=8080):
             self.end_headers()
             self.wfile.write(body)
 
+        def do_HEAD(self):
+            self.do_GET()
+
+        def do_PATCH(self):
+            if not media.route(self):
+                self.send(404, {'error': '接口不存在'})
+
+        do_DELETE = do_PATCH
+
         def do_GET(self):
+            if media.route(self):
+                return
             path = urlsplit(self.path).path
+            if path.startswith('/api/v1/previews/'):
+                digest = path.rsplit('/', 1)[-1]
+                try:
+                    target, kind, _ = previews.get(digest)
+                    if target.exists():
+                        return serve_file(self, target, kind, self.command == 'HEAD')
+                    return self.send(404, {'error': '预览尚未生成'})
+                except ValueError:
+                    return self.send(404, {'error': '资源不存在'})
             if path == '/api/v1/status':
                 return self.send(200, store.snapshot())
             if path.startswith('/api/v1/photos/'):
@@ -108,16 +136,7 @@ def make_server(directory, host='127.0.0.1', port=8080):
                     photo = db.execute('SELECT * FROM photos WHERE sha256=?', (digest,)).fetchone()
                 if photo is None or not (store.originals / digest).is_file():
                     return self.send(404, {'error': '照片不存在'})
-                # Stream original instead of loading large files into memory.
-                self.send_response(200)
-                self.send_header('Content-Type', photo['media_type'])
-                self.send_header('Content-Length', str(photo['size']))
-                self.send_header('X-Content-Type-Options', 'nosniff')
-                self.end_headers()
-                with (store.originals / digest).open('rb') as source:
-                    import shutil
-                    shutil.copyfileobj(source, self.wfile)
-                return
+                return serve_file(self, store.originals / digest, photo['media_type'], self.command == 'HEAD')
             assets = {'/': ('index.html', 'text/html; charset=utf-8'),
                       '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
                       '/style.css': ('style.css', 'text/css; charset=utf-8')}
@@ -127,6 +146,15 @@ def make_server(directory, host='127.0.0.1', port=8080):
             return self.send(404, {'error': '接口不存在'})
 
         def do_POST(self):
+            if media.route(self):
+                return
+            if urlsplit(self.path).path.startswith('/api/v1/previews/'):
+                if self.headers.get('Sec-Fetch-Site') == 'cross-site':
+                    return self.send(403, {'error': '不允许跨站请求'})
+                try:
+                    return self.send(200, previews.start(urlsplit(self.path).path.rsplit('/', 1)[-1]))
+                except ValueError:
+                    return self.send(404, {'error': '资源不存在'})
             if urlsplit(self.path).path != '/api/v1/photos':
                 return self.send(404, {'error': '接口不存在'})
             # Browser cross-origin forms must not mutate this local service.
