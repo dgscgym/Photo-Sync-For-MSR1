@@ -82,7 +82,7 @@ class AdminClientTests(SetupAuthTests):
         self.ready()
         admin=self.call('/admin');client=self.call('/client')
         self.assertEqual(admin[0],200);self.assertEqual(client[0],200)
-        self.assertIn(b'/admin/assets/app.js',admin[1]);self.assertNotIn(b'id="pick"',admin[1])
+        self.assertIn(b'/admin/assets/app.js',admin[1]);self.assertIn(b'id="pick"',admin[1])
         self.assertIn(b'id="pick"',client[1]);self.assertNotIn(b'id="storage-alert"',client[1])
         settings=self.call('/admin/settings')
         self.assertEqual(settings[0],200);self.assertNotIn(b'/setup/review',settings[1])

@@ -1,6 +1,6 @@
 const $=id=>document.getElementById(id);
 const names={overview:'服务概览',library:'照片库'};
-for(const button of document.querySelectorAll('nav button'))button.onclick=()=>{for(const key of Object.keys(names))$(key).hidden=key!==button.dataset.view;document.querySelector('nav .active').classList.remove('active');button.classList.add('active');$('breadcrumb').textContent=names[button.dataset.view];$('overview-stats').hidden=button.dataset.view!=='overview';};
+for(const button of document.querySelectorAll('nav button'))button.onclick=()=>{for(const key of Object.keys(names))$(key).hidden=key!==button.dataset.view;document.querySelector('nav .active').classList.remove('active');button.classList.add('active');$('breadcrumb').textContent=names[button.dataset.view];$('title').textContent=button.dataset.view==='library'?'照片与视频':'服务端状态，一目了然。';$('subtitle').textContent=button.dataset.view==='library'?'浏览媒体原片、查看拍摄信息，或上传新的照片与视频。':'管理媒体目录、多盘保护、备份与运行状态。';$('overview-stats').hidden=button.dataset.view!=='overview';};
 const bytes=n=>n>=1024**3?(n/1024**3).toFixed(2)+' GiB':(n/1024**2).toFixed(1)+' MiB';
 async function api(path,options={}){const response=await fetch(path,options),data=await response.json();if(response.status===401){location.replace('/login');throw new Error('请先登录');}if(!response.ok)throw new Error(data.error||'请求失败');return data;}
 async function refresh(){const state=await api('/api/v1/status');$('version').textContent='v'+state.version+' · 服务端';$('count').textContent=state.stats.photos;$('size').textContent=bytes(state.stats.bytes);renderPhotos(state.photos);await refreshStorage();}
@@ -46,7 +46,8 @@ function openMedia(photo) {
   $('player').hidden = !videoHash; $('full').hidden = !!videoHash;
   $('playback').textContent = photo.live_video ? 'Live Photo · 播放配对动态片段' : '';
   $('original').href = '/api/v1/photos/' + photo.sha256 + '?app=admin';
-  $('caption').textContent = photo.name + ' · SHA256 ' + photo.sha256;
+  $('caption').textContent = photo.name;
+  window.PhotoSyncDetails.show(photo.sha256,'admin');
   const digest = videoHash || photo.sha256;
   $('convert').hidden = false;
   const convert = async () => {
@@ -77,3 +78,35 @@ function openMedia(photo) {
 $('preview').addEventListener('close', () => { previewGeneration++; $('player').pause(); $('player').removeAttribute('src'); $('player').load(); });
 
 $('close').onclick=()=>$('preview').close();
+
+let busy=false;const uploadOne=window.PhotoSyncUpload;
+async function upload(files) {
+  if (busy || !files.length) return;
+  busy = true; $('pick').disabled = true;
+  let added = 0, duplicates = 0; const failed = [], uploaded = [];
+  try {
+    for (const [index, file] of Array.from(files).entries()) {
+      try {
+        if (file.size > 10 * 1024 ** 3) throw new Error('文件超过 10 GiB');
+        const result = await uploadOne(file, (offset, hashing) => {
+          $('notice').textContent = `${index + 1}/${files.length} ${file.name} · ${Math.round(offset / file.size * 100)}%` + (hashing ? ' · 服务端校验中，大文件请稍候' : '');
+        });
+        result.duplicate ? duplicates++ : added++; uploaded.push({file, ...result});
+      } catch (error) { failed.push(file.name + '：' + error.message); }
+    }
+    // Explicit confirmation: matching names are candidates, not proof of Apple asset identity.
+    const stem = name => name.replace(/\.[^.]+$/, '').toLowerCase();
+    for (const item of uploaded.filter(x => /\.(jpe?g|heic|heif|png)$/i.test(x.file.name))) {
+      const candidates = uploaded.filter(x => /\.(mov|mp4)$/i.test(x.file.name) && stem(x.file.name) === stem(item.file.name));
+      if (candidates.length === 1 && confirm(`将 ${item.file.name} 与 ${candidates[0].file.name} 配对为 Live Photo？请确认它们是同一张实况照片。`)) {
+        try { await api('/api/v1/live-pairs', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({photo:item.sha256, video:candidates[0].sha256})}); }
+        catch (error) { failed.push('Live 配对：' + error.message); }
+      }
+    }
+    await refresh();
+    $('notice').textContent = `新增 ${added} 个，重复 ${duplicates} 个，失败 ${failed.length} 项。` + failed.join('；') + (failed.length ? ' 重新选择原文件可继续上传。' : '');
+  } catch (error) { $('notice').textContent = error.message; }
+  finally { busy = false; $('pick').disabled = false; $('files').value = ''; }
+}
+
+$('pick').onclick=()=>$('files').click();$('files').onchange=event=>upload(event.target.files);

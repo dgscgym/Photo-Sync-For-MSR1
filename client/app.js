@@ -68,7 +68,8 @@ function openMedia(photo) {
   $('player').hidden = !videoHash; $('full').hidden = !!videoHash;
   $('playback').textContent = photo.live_video ? 'Live Photo · 播放配对动态片段' : '';
   $('original').href = '/api/v1/photos/' + photo.sha256 + '?app=client';
-  $('caption').textContent = photo.name + ' · SHA256 ' + photo.sha256;
+  $('caption').textContent = photo.name;
+  window.PhotoSyncDetails.show(photo.sha256,'client');
   const digest = videoHash || photo.sha256;
   $('convert').hidden = false;
   const convert = async () => {

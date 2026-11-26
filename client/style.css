@@ -3,3 +3,4 @@
 .video-cover{height:180px;display:grid;place-items:center;background:#dce7df;color:#285e49;font-size:24px}dialog video{display:block;max-width:80vw;max-height:75vh;margin:15px auto}#original{display:inline-block;margin:12px;color:#285e49}
 
 @media(min-width:801px){.stats{grid-template-columns:repeat(3,1fr)}}
+#media-details{padding:16px 0;max-width:80vw}#media-details dl{display:grid;grid-template-columns:90px minmax(0,1fr);gap:10px;font-size:13px;line-height:1.7}#media-details dt{color:#78907e}#media-details dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;color:#304c3b}#media-details h3{font-size:16px}

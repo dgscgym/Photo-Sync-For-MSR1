@@ -2,7 +2,7 @@
 
 面向铭凡 MINISFORUM MS-R1（此芯 P1 / ARM64）的私人照片管理与加密云备份项目。
 
-> 当前版本：**0.10.0 分离账户与强制 2FA 原型**。已实现最大 10 GiB 分片续传、精确去重、照片/视频预览、显式 Live Photo 配对、持久化日志及 SnapRAID 只读监控 / 告警；人脸识别、NPU、加密归档和 115 同步尚未实现。下方需求描述是完整目标，不代表所有功能已完成。
+> 当前版本：**0.11.0 免登录预览与媒体详情原型**。已实现最大 10 GiB 分片续传、精确去重、照片/视频预览、显式 Live Photo 配对、持久化日志及 SnapRAID 只读监控 / 告警；人脸识别、NPU、加密归档和 115 同步尚未实现。下方需求描述是完整目标，不代表所有功能已完成。
 
 详见 [大视频、Live Photo 与 MS-R1 验证说明](docs/MEDIA.md)。FFmpeg 为可选依赖，软件转码尚未在 MS-R1 实机验证。
 
@@ -18,6 +18,8 @@
 
 [账户、2FA 和同步策略](docs/ACCOUNTS-MFA.md)：初始管理员仅登录服务端，由管理员创建客户端用户；两侧强制验证器认证，客户端本机同步与设备认证独立。
 
+[免登录原型预览](docs/PROTOTYPE.md)：使用独立演示目录，直接打开页面，不需要在当前环境走真实账户与 2FA 流程。
+
 ## 快速启动原型
 
 需要 Python 3.9+，先安装锁定依赖：
@@ -25,7 +27,7 @@
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m server.app
+.venv/bin/python -B -m server.app --prototype --data data/prototype-demo
 ```
 
 浏览器打开 http://127.0.0.1:8080。使用 Ctrl+C 停止。原片与 SQLite 数据默认保存在 `data/`，重启后保留。

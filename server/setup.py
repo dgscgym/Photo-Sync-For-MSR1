@@ -105,6 +105,7 @@ class Setup:
                     settings={'executable':'snapraid','snapraid_config':str(cfg),'mounts':mounts,
                               'interval_seconds':max(30,min(86400,int(data.get('interval_seconds',3600)))),
                               'timeout_seconds':30}
+                    if getattr(self.store,'demo',False):raise ValueError('原型不接入真实阵列')
                     self.monitor.configure(settings)
                     mode='connected'
                 with self.store.connect() as db:db.execute("INSERT OR REPLACE INTO app_settings VALUES('snapraid_setup_mode',?)",(mode,))

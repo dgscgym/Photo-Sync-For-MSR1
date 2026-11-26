@@ -46,7 +46,7 @@ class SetupAuthTests(unittest.TestCase):
         self.assertEqual(self.call('/setup/welcome')[0],200)
         credentials=self.bootstrap()
         for path in ['welcome','library','snapraid','review']:self.assertEqual(self.call('/setup/'+path)[0],200)
-        self.assertEqual(self.call('/api/v1/uploads',{'name':'x','size':1})[0],401)
+        self.assertEqual(self.call('/api/v1/uploads',{'name':'x','size':1})[0],403)
         sources=[{'path':str(self.media/name)} for name in ['one','two']]
         self.assertEqual(self.call('/api/v1/library/sources/batch',{'sources':sources})[0],201)
         bad=[{'path':str(self.media/'three')},{'path':str(self.media/'one')}]

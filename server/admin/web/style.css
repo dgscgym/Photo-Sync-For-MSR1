@@ -15,3 +15,4 @@
 .log-row.WARN{border-left:4px solid #d6a545}.log-row.ERROR{border-left:4px solid #c34c57}.log-row.DEBUG{border-left:4px solid #8d9ba9}.log-row.INFO{border-left:4px solid #79a38a}.log-filters select{font:inherit;font-size:13px}
 
 @media(min-width:801px){.stats{grid-template-columns:repeat(4,1fr)}}
+#media-details{padding:16px 0;max-width:80vw}#media-details dl{display:grid;grid-template-columns:90px minmax(0,1fr);gap:10px;font-size:13px;line-height:1.7}#media-details dt{color:#78907e}#media-details dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;color:#304c3b}#media-details h3{font-size:16px}

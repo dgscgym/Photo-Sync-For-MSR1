@@ -16,6 +16,7 @@ from .monitor import Monitor
 from .library import Library
 from .setup import Setup
 from .auth import Auth
+from .metadata import inspect as inspect_media
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = (ROOT / 'VERSION').read_text().strip()
@@ -161,15 +162,28 @@ class Store:
                                  'encryption': 'not_implemented', 'cloud115': 'not_connected'}}
 
 
-def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, library_bases=(), scan_interval=300, storage_bases=(), snapraid_config_bases=(), secure_cookies=False, webauthn_origin=None):
+def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, library_bases=(), scan_interval=300, storage_bases=(), snapraid_config_bases=(), secure_cookies=False, webauthn_origin=None, prototype=False, prototype_media_from=None):
+    directory=Path(directory)
+    if prototype_media_from and not prototype:raise ValueError('演示素材只能在原型模式使用')
+    if prototype and host not in ('127.0.0.1','localhost'):raise ValueError('免登录预览仅允许本机回环地址')
+    if not prototype and (directory/'prototype.marker').exists():raise ValueError('原型数据目录不能直接用于正式认证模式')
+    if prototype and (directory/'photosync.sqlite3').exists():
+        with sqlite3.connect((directory/'photosync.sqlite3').resolve().as_uri()+'?mode=ro',uri=True) as db:
+            for name in ('users','accounts'):
+                if db.execute('SELECT 1 FROM sqlite_master WHERE name=?',(name,)).fetchone() and db.execute('SELECT 1 FROM '+name+' LIMIT 1').fetchone():raise ValueError('免登录原型必须使用独立数据目录')
+    if prototype_media_from:
+        original_root=Path(prototype_media_from).resolve()/'originals'
+        library_bases=tuple(library_bases)+(str(original_root),)
     store = Store(directory)
+    store.demo=prototype
+    if prototype:(directory/'prototype.marker').write_text('Local prototype only. No authentication.\n')
     media = Media(store)
     library = Library(store, library_bases, scan_interval)
     store.library = library
     previews = Previews(store)
     persisted=store.directory/'snapraid-monitor.json'
-    monitor = Monitor(store, snapraid_config or (str(persisted) if persisted.exists() else None))
-    auth=Auth(store,secure_cookies)
+    monitor = Monitor(store, None if prototype else (snapraid_config or (str(persisted) if persisted.exists() else None)))
+    auth=Auth(store,secure_cookies,prototype)
     store.auth=auth
     setup = Setup(store,library,monitor,storage_bases,snapraid_config_bases, bool(snapraid_config))
     with store.connect() as db:
@@ -259,6 +273,11 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, li
                     if photo['live_video'] and not auth.can_media(self.auth_user,photo['live_video']):photo['live_video']=None
                 state['stats']={'photos':len(state['photos']),'bytes':sum(p['size'] for p in state['photos'])}
                 return self.send(200,{key:state[key] for key in ('version','photos','stats')})
+            if path.startswith('/api/v1/media-details/'):
+                digest=path.rsplit('/',1)[-1]
+                if not auth.can_media(self.auth_user,digest,self.auth_audience):return self.send(404,{'error':'媒体不存在'})
+                try:return self.send(200,inspect_media(store,digest,self.auth_audience))
+                except ValueError:return self.send(404,{'error':'媒体不存在'})
             if path == '/api/v1/status':
                 return self.send(200, store.snapshot())
             if path.startswith('/api/v1/photos/'):
@@ -279,9 +298,11 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, li
             if path.startswith('/setup') and path in ('/setup','/setup/welcome','/setup/library','/setup/snapraid','/setup/review'):
                 return self.send(200,(ROOT/'server/admin/web'/'setup.html').read_bytes(),'text/html; charset=utf-8')
             if path=='/admin/settings/snapraid':return self.send(302,b'',Location='/admin/settings#snapraid')
+            if path=='/client/logs':return self.send(302,b'',Location='/client')
             if path in ('/client/settings','/admin/settings','/client/logs','/admin/logs'):
                 home='/client' if path.startswith('/client') else '/admin'
                 profile=(ROOT/'shared/web/profile.fragment.html').read_text().replace('__SETTINGS__',home+'/settings').replace('__HOME__',home)
+                if home=='/client':profile=profile.replace('<a id="user-logs" href="/client/logs">运行日志</a>','')
                 if path.endswith('/logs'):
                     page=(ROOT/'shared/web/logs.html').read_text()
                     if home=='/client':
@@ -302,7 +323,7 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, li
                 '/client/assets/style.css':('client/style.css','text/css; charset=utf-8')}
             for filename in ('app.js','setup.js','login.js','snapraid.js','style.css','setup.css'):
                 assets['/admin/assets/'+filename]=('server/admin/web/'+filename,'text/css; charset=utf-8' if filename.endswith('.css') else 'text/javascript; charset=utf-8')
-            for filename in ('profile.js','profile.css','settings.js','settings.css','upload.js','snapraid.js','directory-picker.js','webauthn.js','mfa.js','client-settings.js','logs.js'):
+            for filename in ('profile.js','profile.css','settings.js','settings.css','upload.js','snapraid.js','directory-picker.js','webauthn.js','mfa.js','client-settings.js','logs.js','media-details.js'):
                 assets['/shared/assets/'+filename]=('shared/web/'+filename,'text/css; charset=utf-8' if filename.endswith('.css') else 'text/javascript; charset=utf-8')
             aliases={'/app.js':'/admin/assets/app.js','/style.css':'/admin/assets/style.css','/setup.js':'/admin/assets/setup.js','/setup.css':'/admin/assets/setup.css','/login.js':'/admin/assets/login.js'}
             path=aliases.get(path,path)
@@ -387,6 +408,15 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, li
     server = Server((host, port), Handler)
     if webauthn_origin:auth.configure_origin(webauthn_origin)
     elif host in ('127.0.0.1','localhost'):auth.configure_origin(f'http://{host}:{server.server_port}')
+    if prototype_media_from:
+        import re
+        origin=Path(prototype_media_from).resolve()
+        with sqlite3.connect((origin/'photosync.sqlite3').as_uri()+'?mode=ro',uri=True) as previous:
+            rows=previous.execute('SELECT sha256,name,size,media_type,created_at FROM photos').fetchall()
+        with store.connect() as db:
+            for row in rows:
+                if re.fullmatch('[0-9a-f]{64}',row[0]) and (origin/'originals'/row[0]).is_file():db.execute('INSERT OR IGNORE INTO photos VALUES(?,?,?,?,?)',row)
+        if not any(s['path']==str(origin/'originals') for s in library.sources()):library.add(str(origin/'originals'),'已有预览素材（只读引用）')
     server.auth = auth
     server.monitor = monitor
     server.library = library
@@ -405,8 +435,10 @@ if __name__ == '__main__':
     parser.add_argument('--snapraid-config-base', action='append', default=[], help='现有 SnapRAID 配置文件授权范围')
     parser.add_argument('--secure-cookies', action='store_true', help='HTTPS 部署时使用 Secure 会话 Cookie')
     parser.add_argument('--webauthn-origin', help='可信的 HTTPS origin；本机回环地址自动配置')
+    parser.add_argument('--prototype',action='store_true',help='本机免登录预览，必须使用独立数据目录')
+    parser.add_argument('--prototype-media-from',help='只读引用旧预览的照片与原片位置，不导入账户')
     args = parser.parse_args()
-    server = make_server(args.data, args.host, args.port, args.snapraid_monitor_config, args.library_base, args.scan_interval, args.storage_base, args.snapraid_config_base, args.secure_cookies, args.webauthn_origin)
+    server = make_server(args.data, args.host, args.port, args.snapraid_monitor_config, args.library_base, args.scan_interval, args.storage_base, args.snapraid_config_base, args.secure_cookies, args.webauthn_origin, args.prototype, args.prototype_media_from)
     print(f'PhotoSync {VERSION}: http://{args.host}:{args.port}', flush=True)
     try:
         server.serve_forever()

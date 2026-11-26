@@ -28,8 +28,8 @@ def totp(secret, timestamp=None):
 
 
 class Auth:
-    def __init__(self,store,secure_cookies=False):
-        self.store=store;self.secure_cookies=secure_cookies;self.lock=threading.RLock();self.origin=None;self.rp_id=None
+    def __init__(self,store,secure_cookies=False,prototype=False):
+        self.store=store;self.prototype=prototype;self.secure_cookies=secure_cookies;self.lock=threading.RLock();self.origin=None;self.rp_id=None
         key=store.directory/'auth.key'
         if not key.exists():
             with store.connect() as db:
@@ -67,6 +67,7 @@ class Auth:
             return db.execute('SELECT * FROM users WHERE username=? COLLATE NOCASE',(username,)).fetchone() if username is not None else db.execute('SELECT * FROM users WHERE is_owner=1').fetchone()
 
     def complete(self):
+        if self.prototype:return True
         with self.store.connect() as db:return db.execute("SELECT 1 FROM app_settings WHERE key='setup_complete'").fetchone() is not None
 
     def cookie(self,h,audience):
@@ -75,7 +76,8 @@ class Auth:
         except (KeyError,ValueError):return ''
 
     def current(self,h,audience=None):
-        audience=audience or ('client' if urlsplit(h.path).path.startswith(('/client','/api/v1/client','/api/v1/uploads')) else 'admin')
+        if self.prototype:return {'id':0,'username':'原型预览','server_access':1,'is_owner':1,'active':1,'totp_enabled':0,'audience':audience or ('client' if urlsplit(h.path).path.startswith('/client') else 'admin'),'full_mfa_at':0}
+        audience=audience or ('client' if urlsplit(h.path).path.startswith(('/client','/api/v1/client')) else 'admin')
         token=self.cookie(h,audience)
         with self.store.connect() as db:
             row=db.execute('SELECT u.*,s.audience,s.full_mfa_at FROM auth_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.audience=? AND s.expires>? AND u.active=1 AND u.totp_enabled=1',(hashlib.sha256(token.encode()).hexdigest(),audience,int(time.time()))).fetchone()
@@ -293,6 +295,22 @@ class Auth:
 
     def gate(self,h):
         path=urlsplit(h.path).path
+        if self.prototype:
+            selected=parse_qs(urlsplit(h.path).query).get('app',[None])[0]
+            audience=selected if selected in ('admin','client') else ('client' if path.startswith(('/client','/api/v1/client')) else 'admin')
+            h.auth_audience=audience;h.auth_user=self.current(h,audience)
+            if path=='/api/v1/auth/status':
+                audience=parse_qs(urlsplit(h.path).query).get('audience',['admin'])[0]
+                h.send(200,{'admin_exists':True,'authenticated':True,'setup_complete':True,'username':'原型预览','server_access':audience=='admin','audience':audience,'mfa_enabled':False,'demo':True});return True
+            if path.startswith('/api/v1/auth/'):
+                h.send(409,{'error':'免登录原型不执行真实认证或设备绑定','demo':True});return True
+            if path.startswith('/api/v1/admin/users'):
+                if h.command=='GET':h.send(200,{'users':[],'demo':True})
+                else:h.send(409,{'error':'原型预览不创建真实账户'})
+                return True
+            if path in ('/login','/client/login'):
+                h.send(302,b'',Location='/client' if path.startswith('/client') else '/admin');return True
+            return False
         if path.startswith('/api/v1/auth/'):
             try:
                 with self.lock:self.auth_route(h,path)
@@ -302,8 +320,8 @@ class Auth:
         public=('/login','/login.js','/setup.js','/setup.css','/app.js','/style.css','/client/login')
         if path in public or path.startswith(('/admin/assets/','/client/assets/','/shared/assets/')):return False
         if not self.account() and path in ('/setup','/setup/welcome'):return False
-        client_paths=path.startswith(('/client','/api/v1/client','/api/v1/uploads'))
-        if path.startswith(('/api/v1/photos','/api/v1/previews','/api/v1/live-pairs')):
+        client_paths=path.startswith(('/client','/api/v1/client'))
+        if path.startswith(('/api/v1/photos','/api/v1/previews','/api/v1/live-pairs','/api/v1/uploads','/api/v1/media-details')):
             selected=parse_qs(urlsplit(h.path).query).get('app',[None])[0]
             audience=selected if selected in ('admin','client') else ('client' if self.cookie(h,'client') else 'admin')
         else:audience='client' if client_paths else 'admin'
@@ -320,7 +338,7 @@ class Auth:
             if path in ('/','/admin','/client'):h.send(302,b'',Location='/client/login' if path=='/client' else '/setup/library')
             else:h.send(403,{'error':'请先完成初始化'})
             return True
-        if path.startswith(('/api/v1/photos/','/api/v1/previews/')):
+        if path.startswith(('/api/v1/photos/','/api/v1/previews/','/api/v1/media-details/')):
             digest=path.rsplit('/',1)[-1]
             if not self.can_media(user,digest,audience):h.send(404,{'error':'媒体不存在'});return True
         return False
