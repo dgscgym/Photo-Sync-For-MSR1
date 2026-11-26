@@ -163,7 +163,8 @@ async function refreshStorage() {
     const state = await api('/api/v1/snapraid', {signal:controller.signal});
     const label = stateNames[state.state] || '状态未知';
     $('storage-alert').className = 'storage-alert ' + state.state;
-    $('storage-alert').textContent = `⚠ SnapRAID · ${label}：${state.message}` + (state.acknowledged ? '（已知晓，异常仍未解除）' : '');
+    $('storage-configure').textContent = state.configured ? '查看 SnapRAID 配置 →' : '配置 SnapRAID →';
+    $('storage-alert-message').textContent = `⚠ SnapRAID · ${label}：${state.message}` + (state.acknowledged ? '（已知晓，异常仍未解除）' : '');
     $('storage-title').textContent = label + (state.running ? ' · 检查中' : '');
     $('storage-message').textContent = state.message;
     $('storage-time').textContent = `最近检查：${state.checked_at ? new Date(state.checked_at).toLocaleString() : '尚未检查'} · 周期 ${state.interval_seconds} 秒`;
@@ -172,7 +173,7 @@ async function refreshStorage() {
     const result = await api('/api/v1/logs?category=snapraid', {signal:controller.signal}); renderLogs($('storage-logs'), result.items);
   } catch (error) {
     $('storage-alert').className = 'storage-alert unknown';
-    $('storage-alert').textContent = '⚠ 无法获取多盘保护状态，请检查服务连接；上次状态不能视为当前状态。';
+    $('storage-alert-message').textContent = '⚠ 无法获取多盘保护状态，请检查服务连接；上次状态不能视为当前状态。';
   } finally { clearTimeout(timer); }
 }
 $('check-storage').onclick = async () => {
