@@ -33,9 +33,9 @@
   const generation=++renderId;view.replaceChildren(el('p','读取目录中…'));update();
   try{const data=await api('/api/v1/library/browse?'+new URLSearchParams({path,offset,directories_only:1}));if(generation!==renderId)return;view.replaceChildren();
    const tools=el('div');tools.className='picker-tools';const roots=el('button','全部授权位置');roots.onclick=()=>browse();tools.append(roots);
-   if(data.parent){const up=el('button','上一级');up.onclick=()=>browse(data.parent);tools.append(up);}view.append(tools,el('p',data.path||'勾选目录以添加，点击目录名称进入下一级。'));
+   if(data.path){const up=el('button','上一级');up.onclick=()=>browse(data.parent||'');tools.append(up);}view.append(tools,el('p',data.path||'勾选目录以添加，点击目录名称进入下一级。'));
    if(!data.path){if(!data.roots.length)view.append(el('p','暂无授权位置，请在部署时映射媒体目录。'));for(const root of data.roots)view.append(directoryRow(root,root));return;}
-   view.append(directoryRow(data.path,'选择当前目录'),el('p',`子目录 ${data.total} 个`));const list=el('div');list.className='picker-list';
+   view.append(el('p',`子目录 ${data.total} 个`));const list=el('div');list.className='picker-list';
    for(const item of data.entries){if(item.directory)list.append(directoryRow(item.path,item.name));}
    if(!data.total)list.append(el('p','没有子目录'));view.append(list);
    const pages=el('div');if(data.offset){const prev=el('button','上一页');prev.onclick=()=>browse(data.path,Math.max(0,data.offset-100));pages.append(prev);}if(data.next_offset){const next=el('button','下一页');next.onclick=()=>browse(data.path,data.next_offset);pages.append(next);}view.append(pages);
