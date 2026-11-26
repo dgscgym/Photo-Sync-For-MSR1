@@ -86,6 +86,8 @@ class Store:
         return db
 
     def log(self, category, level, action, task_id, message, details):
+        level='WARN' if level.upper()=='WARNING' else level.upper()
+        if level not in ('INFO','DEBUG','WARN','ERROR'):raise ValueError('无效的日志级别')
         with self.connect() as db:
             db.execute('INSERT INTO audit_logs(category,level,action,task_id,message,details,created_at) VALUES(?,?,?,?,?,?,?)',
                        (category, level, action, task_id, message[:1000], json.dumps(details,ensure_ascii=False), datetime.now(timezone.utc).isoformat()))
@@ -97,12 +99,13 @@ class Store:
         if before:
             clauses.append('id<?'); values.append(before)
         if level:
-            clauses.append('level=?'); values.append(level)
+            clauses.append("CASE WHEN upper(level)='WARNING' THEN 'WARN' ELSE upper(level) END=?"); values.append('WARN' if level.upper()=='WARNING' else level.upper())
         query = 'SELECT * FROM audit_logs' + (' WHERE ' + ' AND '.join(clauses) if clauses else '') + ' ORDER BY id DESC LIMIT 100'
         with self.connect() as db:
             rows = [dict(row) for row in db.execute(query,values)]
         for row in rows:
             row['details'] = json.loads(row['details'])
+            row['level']='WARN' if row['level'].upper()=='WARNING' else row['level'].upper()
         return {'items':rows, 'next_before':rows[-1]['id'] if len(rows)==100 else None}
 
     def resolve(self, sha256):
@@ -182,7 +185,7 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, li
                     context['session_id'] = path.split('/')[4][:64]
                 if self.headers.get('X-Filename'):
                     context['name'] = unquote(self.headers['X-Filename'])[:255]
-                store.log('upload', 'error' if status >= 500 else 'warning' if status >= 400 else 'info',
+                store.log('upload', 'error' if status >= 500 else 'warning' if status >= 400 else 'debug' if self.command=='PATCH' else 'info',
                           self.command + ' ' + path[:150], context.get('session_id', context.get('id', '')),
                           context.get('error', ('重复文件已拦截' if context.get('duplicate') else '文件已校验入库' if context.get('sha256') else '分片已保存' if self.command == 'PATCH' else '上传会话已创建' if status == 201 else '上传操作已记录')), context)
             if not isinstance(body, bytes):
@@ -255,6 +258,7 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, li
                 return self.send(200,page.encode(),'text/html; charset=utf-8')
             if path.startswith('/setup') and path in ('/setup','/setup/welcome','/setup/library','/setup/snapraid','/setup/review'):
                 return self.send(200,(ROOT/'server/admin/web'/'setup.html').read_bytes(),'text/html; charset=utf-8')
+            if path=='/admin/settings/snapraid':return self.send(302,b'',Location='/admin/settings#snapraid')
             if path in ('/client/settings','/admin/settings'):
                 home='/client' if path.startswith('/client') else '/admin'
                 page=(ROOT/'shared/web/settings.html').read_text().replace('__HOME__',home).replace('__LABEL__','客户端' if home=='/client' else '管理台')

@@ -1,5 +1,5 @@
 const $=id=>document.getElementById(id);
-const names={overview:'服务概览',library:'照片库',backup:'加密备份',snapraid:'多盘保护',activity:'日志中心',directories:'目录管理'};
+const names={overview:'服务概览',library:'照片库'};
 for(const button of document.querySelectorAll('nav button'))button.onclick=()=>{for(const key of Object.keys(names))$(key).hidden=key!==button.dataset.view;document.querySelector('nav .active').classList.remove('active');button.classList.add('active');$('breadcrumb').textContent=names[button.dataset.view];};
 const bytes=n=>n>=1024**3?(n/1024**3).toFixed(2)+' GiB':(n/1024**2).toFixed(1)+' MiB';
 async function api(path,options={}){const response=await fetch(path,options),data=await response.json();if(response.status===401){location.replace('/login');throw new Error('请先登录');}if(!response.ok)throw new Error(data.error||'请求失败');return data;}
@@ -35,25 +35,11 @@ async function refreshStorage() {
     $('storage-alert').className = 'storage-alert ' + state.state;
     $('storage-configure').textContent = state.configured ? '查看 SnapRAID 配置 →' : '配置 SnapRAID →';
     $('storage-alert-message').textContent = `⚠ SnapRAID · ${label}：${state.message}` + (state.acknowledged ? '（已知晓，异常仍未解除）' : '');
-    $('storage-title').textContent = label + (state.running ? ' · 检查中' : '');
-    $('storage-message').textContent = state.message;
-    $('storage-time').textContent = `最近检查：${state.checked_at ? new Date(state.checked_at).toLocaleString() : '尚未检查'} · 周期 ${state.interval_seconds} 秒`;
-    $('check-storage').disabled = state.running;
-    $('ack-storage').disabled = !!state.acknowledged;
-    const result = await api('/api/v1/logs?category=snapraid', {signal:controller.signal}); renderLogs($('storage-logs'), result.items);
   } catch (error) {
     $('storage-alert').className = 'storage-alert unknown';
     $('storage-alert-message').textContent = '⚠ 无法获取多盘保护状态，请检查服务连接；上次状态不能视为当前状态。';
   } finally { clearTimeout(timer); }
 }
-$('check-storage').onclick = async () => {
-  try { await api('/api/v1/snapraid/check', {method:'POST'}); await refreshStorage(); }
-  catch (error) { $('notice').textContent = '检查请求失败：' + error.message; }
-};
-$('ack-storage').onclick = async () => {
-  try { await api('/api/v1/snapraid/acknowledge', {method:'POST'}); await refreshStorage(); }
-  catch (error) { $('notice').textContent = error.message; }
-};
 for (const id of ['log-category','log-level']) $(id).onchange = () => loadLogs().catch(error => { $('notice').textContent = error.message; });
 $('refresh-logs').onclick = () => loadLogs().catch(error => { $('notice').textContent = error.message; });
 $('more-logs').onclick = () => loadLogs(true).catch(error => { $('notice').textContent = error.message; });
@@ -62,44 +48,7 @@ $('export-logs').onclick = () => {
   const link = document.createElement('a'); link.href = url; link.download = 'photosync-logs.json'; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
-setInterval(refreshStorage, 15000);
-
-let libraryStamp = '';
-async function refreshLibrary(first = false) {
-  try {
-    const state = await api('/api/v1/library');
-    $('library-bases').textContent = state.bases.length ? '服务端已授权目录：' + state.bases.join('、') : '尚无授权目录。请启动服务时添加 --library-base /容器内媒体路径；也可先直接上传。';
-    $('source-list').replaceChildren();
-    for (const source of state.sources) {
-      const card = document.createElement('div'); card.className = 'monitor-card';
-      const title = document.createElement('h3'); title.textContent = source.name;
-      const path = document.createElement('p'); path.textContent = source.path;
-      const status = document.createElement('p'); status.textContent = `${source.state} · ${source.message} · 最近扫描 ${source.last_scan ? new Date(source.last_scan).toLocaleString() : '尚无'}`;
-      const bind = document.createElement('button'); bind.textContent = '磁盘路径变了？重新绑定';
-      bind.onclick = () => window.PhotoSyncDirectoryPicker.open({sourceId:source.id,onSaved:refreshLibrary});
-      card.append(title,path,status,bind); $('source-list').append(card);
-    }
-    $('library-scan').disabled = state.scanning;
-    const stamp = JSON.stringify(state.sources.map(s => [s.id,s.last_scan,s.state]));
-    if (libraryStamp && stamp !== libraryStamp) await refresh();
-    libraryStamp = stamp;
-    if (first && !state.setup_complete) location.replace('/setup/welcome');
-  } catch (error) { $('library-message').textContent = '目录状态读取失败：' + error.message; }
-}
-$('source-add').onclick=()=>window.PhotoSyncDirectoryPicker.open({onSaved:async()=>{await refreshLibrary();$('library-message').textContent='目录已确认添加，后台扫描中。';}});
-$('library-scan').onclick = async () => {
-  try { await api('/api/v1/library/scan',{method:'POST'}); $('library-message').textContent = '扫描已请求，请稍候。'; setTimeout(refreshLibrary,1500); }
-  catch (error) { $('library-message').textContent = error.message; }
-};
-$('library-export').onclick = async () => {
-  try {
-    const data = await api('/api/v1/library/manifest');
-    const url = URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
-    const link=document.createElement('a');link.href=url;link.download='photosync-library-v1.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
-  } catch(error) { $('library-message').textContent=error.message; }
-};
-refreshLibrary(true); setInterval(() => refreshLibrary(),15000);
-
+setInterval(()=>{refreshStorage();if(!$('overview').hidden)loadLogs().catch(()=>{});},15000);
 
 refresh().catch(error=>{$('notice').textContent=error.message;});
 

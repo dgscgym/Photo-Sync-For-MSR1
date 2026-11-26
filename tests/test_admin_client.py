@@ -53,13 +53,32 @@ class AdminClientTests(SetupAuthTests):
         (folder/'escape.png').symlink_to(outside)
         self.assertEqual(self.call('/api/v1/library/browse-preview?path='+quote(str(folder/'escape.png')))[0],400)
 
+    def test_navigation_and_log_levels(self):
+        self.ready()
+        page=self.call('/admin')[1].decode()
+        for view in ('directories','snapraid','backup','activity'):
+            self.assertNotIn('data-view="'+view+'"',page)
+        self.assertIn('id="overview"',page)
+        self.assertIn('id="events"',page)
+        self.assertEqual(self.call('/admin/settings/snapraid')[0],302)
+        for level in ('INFO','DEBUG','WARN','ERROR'):
+            self.server.library.store.log('test',level,'test','','level check',{})
+            rows=self.call('/api/v1/logs?category=test&level='+level)[1]['items']
+            self.assertEqual(len(rows),1)
+            self.assertEqual(rows[0]['level'],level)
+        self.server.library.store.log('test','warning','legacy','','legacy warning',{})
+        self.assertEqual(len(self.call('/api/v1/logs?category=test&level=warning')[1]['items']),2)
+        settings=self.call('/admin/settings')[1].decode()
+        for section in ('album-settings','snapraid-settings','backup-settings'):
+            self.assertIn('id="'+section+'"',settings)
+
     def test_separate_surfaces_and_settings_do_not_reset_setup(self):
         self.ready()
         admin=self.call('/admin');client=self.call('/client')
         self.assertEqual(admin[0],200);self.assertEqual(client[0],200)
         self.assertIn(b'/admin/assets/app.js',admin[1]);self.assertNotIn(b'id="pick"',admin[1])
         self.assertIn(b'id="pick"',client[1]);self.assertNotIn(b'id="storage-alert"',client[1])
-        settings=self.call('/admin/settings/snapraid')
+        settings=self.call('/admin/settings')
         self.assertEqual(settings[0],200);self.assertNotIn(b'/setup/review',settings[1])
         self.assertNotIn('library',self.call('/api/v1/snapraid/settings')[1])
         self.assertNotIn('events',self.call('/api/v1/client/status')[1])

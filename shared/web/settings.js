@@ -3,8 +3,9 @@
  async function call(path,options={}){const response=await fetch(path,options),data=await response.json();if(response.status===401){location.replace(location.pathname.startsWith('/client')?'/client/login':'/login');throw new Error('请登录');}if(!response.ok)throw new Error(data.error||'操作失败');return data;}
  const post=(path,data)=>call(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
  function text(parent,value,tag='p'){const el=document.createElement(tag);el.textContent=value;parent.append(el);return el;}
- function tab(snap){get('album-settings').hidden=snap;get('snapraid-settings').hidden=!snap;get('albums-tab').setAttribute('aria-pressed',String(!snap));get('snapraid-tab').setAttribute('aria-pressed',String(snap));}
- get('albums-tab').onclick=()=>{tab(false);history.replaceState(null,'','#albums');};get('snapraid-tab').onclick=()=>{tab(true);history.replaceState(null,'','#snapraid');};tab(location.hash==='#snapraid');
+ function tab(key){for(const name of ['albums','snapraid','backup']){get(name==='albums'?'album-settings':name+'-settings').hidden=name!==key;get(name+'-tab').setAttribute('aria-pressed',String(name===key));}}
+ for(const key of ['albums','snapraid','backup'])get(key+'-tab').onclick=()=>{tab(key);history.replaceState(null,'','#'+key);};
+ tab(['snapraid','backup'].includes(location.hash.slice(1))?location.hash.slice(1):'albums');
  async function albums(){
   const state=await call('/api/v1/library');get('album-bases').textContent='已授权范围：'+(state.bases.join('、')||'暂无，请在部署时授权媒体目录');get('album-sources').replaceChildren();
   for(const source of state.sources){const row=document.createElement('div');row.className='source';text(row,`${source.name} · ${source.path}`,'strong');text(row,`${source.state} · ${source.message}`);const bind=document.createElement('button');bind.textContent='修改挂载路径';bind.onclick=()=>window.PhotoSyncDirectoryPicker.open({sourceId:source.id,onSaved:albums});row.append(bind);get('album-sources').append(row);}

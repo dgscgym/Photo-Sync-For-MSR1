@@ -9,7 +9,7 @@ function summary(target,plan){target.replaceChildren();if(!plan)return;text(targ
 async function load(){
  state=await api('/api/v1/snapraid/settings');const result=await api('/api/v1/snapraid/settings/disks');
  choices.clear();invalidate();$('disks').replaceChildren();
- $('status').textContent=state.snapraid.message;summary($('current'),state.disk_plan);
+ renderHealth(state.snapraid);summary($('current'),state.disk_plan);
  const plan=state.disk_plan;if(plan){$('mode').value=plan.mode;$('interval').value=plan.interval_seconds||3600;}
  const locked=state.snapraid_locked||state.snapraid.configured;$('preview').disabled=locked;
  if(locked)text($('disks'),'运行中的阵列配置由服务端管理，本版仅可查看。');
@@ -29,5 +29,10 @@ $('mode').onchange=$('interval').onchange=invalidate;
 $('reload').onclick=()=>action(load);
 $('preview').onclick=()=>action(async()=>{proposal=await post({...request(),preview:true});summary($('proposal'),proposal);$('save').disabled=false;});
 $('save').onclick=()=>action(async()=>{if(!proposal)return;if(!confirm('仅保存 SnapRAID 设置，不改变照片目录或重新初始化。继续？'))return;$('save').disabled=true;await post({...request(),confirmed:true});await load();$('message').textContent='SnapRAID 设置已保存。';});
-$('check').onclick=()=>action(async()=>{await api('/api/v1/snapraid/check',{method:'POST'});$('message').textContent='检查已请求，可在管理台查看结果和日志。';});
+$('check').onclick=()=>action(async()=>{await api('/api/v1/snapraid/check',{method:'POST'});$('message').textContent='检查已请求，结果稍后更新。';await refreshHealth();});
 load().catch(error=>{$('message').textContent=error.message;});
+
+function renderHealth(value){$('status').textContent=value.message;$('status').className='health-state '+value.state;$('health-time').textContent='最近检查：'+(value.checked_at?new Date(value.checked_at).toLocaleString():'尚未检查')+' · 周期 '+value.interval_seconds+' 秒'+(value.acknowledged?' · 已知晓（状态未解除）':'');$('ack-snap').disabled=!!value.acknowledged;}
+async function refreshHealth(){try{renderHealth(await api('/api/v1/snapraid'));}catch(error){$('status').textContent='无法获取保护状态，请检查连接';$('status').className='health-state unknown';}}
+$('ack-snap').onclick=()=>action(async()=>{await api('/api/v1/snapraid/acknowledge',{method:'POST'});await refreshHealth();});
+setInterval(refreshHealth,15000);

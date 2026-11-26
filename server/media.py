@@ -102,7 +102,7 @@ class Media:
                 h.audit_context = {"name":session["name"], "size":session["size"], "offset":session["offset"]}
                 part = self.parts / uid
                 if h.command == 'GET' and not complete:
-                    self.store.log('upload', 'info', 'resume_queried', uid, '查询上传进度', {'name':session['name'], 'offset':session['offset'], 'size':session['size']})
+                    self.store.log('upload', 'debug', 'resume_queried', uid, '查询上传进度', {'name':session['name'], 'offset':session['offset'], 'size':session['size']})
                     h.send(200, session); return True
                 if h.command == 'DELETE' and not complete:
                     if not session['sha256']:
