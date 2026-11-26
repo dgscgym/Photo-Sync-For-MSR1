@@ -50,7 +50,7 @@ class Setup:
                 if self.snapshot()['snapraid_mode']=='pending':raise ValueError('请先完成 SnapRAID 选择')
                 with self.store.connect() as db:
                     db.execute("INSERT OR REPLACE INTO app_settings VALUES('setup_complete','true')")
-                    db.execute('DELETE FROM sessions')
+                    db.execute('DELETE FROM auth_sessions')
                 cookie=h.server.auth.clear(h)
                 h.send(200,{'setup_complete':True},Set_Cookie=cookie);return True
             if h.command=='POST' and path=='/api/v1/setup/snapraid':

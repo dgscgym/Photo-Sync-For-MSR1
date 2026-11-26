@@ -4,3 +4,5 @@ select{padding:12px;border:1px solid #ccd9c9;border-radius:9px;width:100%;font:i
 nav button{font-size:14px;padding:10px 16px;margin:0}nav button[aria-pressed=true]{background:#2d634a;color:white;border-color:#2d634a}.panel button,.panel a{font-size:14px}header>a{font-size:23px}h1{font-size:30px}
 
 .health-state{padding:14px;border-radius:10px;background:#edf3e8}.health-state.warning,.health-state.unknown{background:#fff3d6;color:#805a20}.health-state.critical{background:#ffe4e5;color:#a42735}
+
+input[type=checkbox]{width:auto;margin:10px 8px 10px 0}.user-menu a{font-size:14px}pre{white-space:pre-wrap;overflow-wrap:anywhere}.log-row{border:1px solid #dce5d9;border-radius:10px;padding:15px;margin:10px 0;background:white}.log-row.WARN{border-left:4px solid #d2a247}.log-row.ERROR{border-left:4px solid #c85059}.log-row.DEBUG{border-left:4px solid #879aab}.log-row.INFO{border-left:4px solid #7eaa8d}

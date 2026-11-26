@@ -11,18 +11,37 @@ from server.app import make_server
 
 PNG = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1sAAAAASUVORK5CYII=')
 
+def finish_mfa(server,challenge,send):
+    from server.auth import totp
+    from unittest.mock import patch
+    import time
+    with server.library.store.connect() as db:
+        pending=db.execute('SELECT * FROM auth_challenges WHERE token_hash=?',(__import__('hashlib').sha256(challenge['ticket'].encode()).hexdigest(),)).fetchone()
+        user=db.execute('SELECT * FROM users WHERE id=?',(pending['user_id'],)).fetchone()
+    secret=challenge.get('secret') or server.auth.cipher.decrypt(user['totp_secret'].encode()).decode()
+    timestamp=max(time.time(),(user['totp_last_step']+1)*30)
+    with patch('server.auth.time.time',return_value=timestamp):
+        return send('/api/v1/auth/mfa/verify',{'ticket':challenge['ticket'],'code':totp(secret,timestamp)})
+
 def authenticate(server):
-    def call(path, data, cookie=''):
-        client=http.client.HTTPConnection('127.0.0.1',server.server_port)
-        client.request('POST',path,json.dumps(data).encode(),{'Content-Type':'application/json','Cookie':cookie})
-        response=client.getresponse();response.read();result=response.getheader('Set-Cookie','').split(';')[0];client.close();return result
+    cookies={}
+    def call(path,data):
+        c=http.client.HTTPConnection('127.0.0.1',server.server_port)
+        c.request('POST',path,json.dumps(data).encode(),{'Content-Type':'application/json','Cookie':'; '.join(k+'='+v for k,v in cookies.items())})
+        r=c.getresponse();status=r.status;result=json.loads(r.read());cookie=r.getheader('Set-Cookie');c.close()
+        if cookie:
+            key,value=cookie.split(';')[0].split('=',1);cookies[key]=value
+        if result.get('mfa_required'):return finish_mfa(server,result,call)
+        assert status<400,(path,status,result)
+        return result
     credentials={'username':'test-admin','password':'test-password-12345'}
-    cookie=call('/api/v1/auth/login' if server.auth.account() else '/api/v1/auth/bootstrap',credentials)
+    call('/api/v1/auth/login' if server.auth.account() else '/api/v1/auth/bootstrap',credentials)
     if not server.auth.complete():
-        call('/api/v1/setup/snapraid',{'skip':True},cookie)
-        call('/api/v1/setup/finish',{},cookie)
-        cookie=call('/api/v1/auth/login',credentials)
-    return cookie
+        call('/api/v1/setup/snapraid',{'skip':True});call('/api/v1/setup/finish',{});call('/api/v1/auth/login',credentials)
+    client_credentials={'username':'test-client','password':'test-client-password-12345'}
+    if not server.auth.account('test-client'):call('/api/v1/admin/users',client_credentials)
+    call('/api/v1/auth/login',dict(client_credentials,audience='client'))
+    return '; '.join(k+'='+v for k,v in cookies.items())
 
 class ApiTests(unittest.TestCase):
     def setUp(self):

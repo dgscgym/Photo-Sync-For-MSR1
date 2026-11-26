@@ -9,6 +9,9 @@ class AdminClientTests(SetupAuthTests):
         credentials=self.bootstrap()
         self.call('/api/v1/setup/snapraid',{'skip':True});self.call('/api/v1/setup/finish',{})
         self.call('/api/v1/auth/login',credentials)
+        client={'username':'viewer','password':'viewer-password-123'}
+        self.call('/api/v1/admin/users',client)
+        self.call('/api/v1/auth/login',dict(client,audience='client'))
 
     def test_profile_and_app_local_settings(self):
         self.ready()
@@ -22,12 +25,14 @@ class AdminClientTests(SetupAuthTests):
             settings=self.call(home+'/settings')
             self.assertEqual(settings[0],200)
             text=settings[1].decode()
-            self.assertIn('id="album-save"',text)
-            self.assertIn('id="mode"',text)
+            self.assertIn('id="choose-folder"' if home=='/client' else 'id="album-save"',text)
+            if home=='/client':self.assertNotIn('id="mode"',text)
+            else:self.assertIn('id="mode"',text)
             self.assertNotIn('href="'+other,text)
         self.assertEqual(self.call('/shared/assets/profile.js')[0],200)
         self.assertEqual(self.call('/shared/assets/upload.js')[0],200)
         self.call('/api/v1/auth/logout',{})
+        self.call('/api/v1/auth/logout',{'audience':'client'})
         self.assertIsNone(self.call('/api/v1/auth/status')[1]['username'])
         self.assertEqual(self.call('/client/settings')[0],302)
 
@@ -59,7 +64,8 @@ class AdminClientTests(SetupAuthTests):
         for view in ('directories','snapraid','backup','activity'):
             self.assertNotIn('data-view="'+view+'"',page)
         self.assertIn('id="overview"',page)
-        self.assertIn('id="events"',page)
+        self.assertNotIn('id="events"',page)
+        self.assertIn('id="events"',self.call('/admin/logs')[1].decode())
         self.assertEqual(self.call('/admin/settings/snapraid')[0],302)
         for level in ('INFO','DEBUG','WARN','ERROR'):
             self.server.library.store.log('test',level,'test','','level check',{})
@@ -95,5 +101,6 @@ class AdminClientTests(SetupAuthTests):
         self.assertEqual(self.call('/api/v1/client/status')[0],200)
         self.assertEqual(len(self.server.library.sources()),0)
         self.call('/api/v1/auth/logout',{})
+        self.call('/api/v1/auth/logout',{'audience':'client'})
         self.assertEqual(self.call('/admin/settings/snapraid')[0],302)
         self.assertEqual(self.call('/api/v1/client/status')[0],401)

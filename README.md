@@ -2,7 +2,7 @@
 
 面向铭凡 MINISFORUM MS-R1（此芯 P1 / ARM64）的私人照片管理与加密云备份项目。
 
-> 当前版本：**0.9.0 精简管理台原型**。已实现最大 10 GiB 分片续传、精确去重、照片/视频预览、显式 Live Photo 配对、持久化日志及 SnapRAID 只读监控 / 告警；人脸识别、NPU、加密归档和 115 同步尚未实现。下方需求描述是完整目标，不代表所有功能已完成。
+> 当前版本：**0.10.0 分离账户与强制 2FA 原型**。已实现最大 10 GiB 分片续传、精确去重、照片/视频预览、显式 Live Photo 配对、持久化日志及 SnapRAID 只读监控 / 告警；人脸识别、NPU、加密归档和 115 同步尚未实现。下方需求描述是完整目标，不代表所有功能已完成。
 
 详见 [大视频、Live Photo 与 MS-R1 验证说明](docs/MEDIA.md)。FFmpeg 为可选依赖，软件转码尚未在 MS-R1 实机验证。
 
@@ -16,24 +16,28 @@
 
 [客户端与管理台架构](docs/ARCHITECTURE.md)：`/client` 浏览与上传，`/admin` 服务端管理，`/admin/settings/snapraid` 单独调整 SnapRAID。首次引导不参与日常设置。
 
+[账户、2FA 和同步策略](docs/ACCOUNTS-MFA.md)：初始管理员仅登录服务端，由管理员创建客户端用户；两侧强制验证器认证，客户端本机同步与设备认证独立。
+
 ## 快速启动原型
 
-需要 Python 3.9+，无第三方依赖：
+需要 Python 3.9+，先安装锁定依赖：
 
 ```bash
-python3 -m server.app
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m server.app
 ```
 
 浏览器打开 http://127.0.0.1:8080。使用 Ctrl+C 停止。原片与 SQLite 数据默认保存在 `data/`，重启后保留。
 
 ```bash
 # 自定义端口与持久化目录
-python3 -m server.app --port 8081 --data /path/to/photosync-data
+.venv/bin/python -m server.app --port 8081 --data /path/to/photosync-data
 # 运行集成测试
-python3 -m unittest discover -s tests -v
+.venv/bin/python -B -m unittest discover -s tests -v
 ```
 
-原型提供单管理员登录，默认只监听回环地址；远程部署需 HTTPS 反向代理及 --secure-cookies。尚未在 MS-R1 上验证。不应直接向公网开放。文件签名检查不是完整图片解码验证。
+原型提供分离账户与强制 TOTP 2FA，默认只监听回环地址；远程部署需 HTTPS 反向代理及 --secure-cookies。尚未在 MS-R1 上验证。不应直接向公网开放。文件签名检查不是完整图片解码验证。
 
 - `client/`：浏览器客户端，仅照片浏览、上传与预览。
 - `server/admin/web/`：独立服务端管理台、初始化、登录与 SnapRAID 日常设置。
@@ -73,7 +77,7 @@ python3 -m unittest discover -s tests -v
 - 哈希针对完整原始文件；修改 EXIF、重新压缩或转格式后的文件可能有不同哈希，按不同文件处理。
 - 画面相似但字节不同的照片，暂不自动合并或删除。
 - 缩略图、人脸裁剪等衍生文件与原片分别管理，不计作重复原片。
-- 若支持多用户，文件去重不能绕过各用户的资源权限；具体去重范围待确认。
+- 已实现用户媒体访问关联与底层全局 SHA256 去重；去重不会自动授予其他用户读取权限。
 
 ### 2.3 自动加密归档与 115 同步
 
@@ -236,7 +240,7 @@ LXC 设备映射与虚拟机硬件直通分别调研，不能把其中一种成�
 
 - [ ] MS-R1 内存容量、磁盘布局、当前 Debian / 内核 / BIOS 版本。
 - [ ] 照片总量、总容量、每日新增量，以及首轮导入可接受时间。
-- [ ] 单用户还是家庭多用户；是否需要独立账号和相册权限。
+- [x] 管理员创建客户端用户，可授予服务端权限；两侧强制 2FA。相册共享/授权范围另行完善。
 - [x] 纳入大视频（最大 10 GiB）与 Live Photo；当前支持范围见 MEDIA 文档。
 - [ ] RAW、其他厂商单文件实况格式的支持范围。
 - [ ] 上传入口：网页、手机自动备份、目录扫描分别需要哪些。

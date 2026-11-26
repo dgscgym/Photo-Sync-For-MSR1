@@ -43,6 +43,10 @@ class Media:
 
             ''')
 
+        with store.connect() as db:
+            if 'user_id' not in {r['name'] for r in db.execute('PRAGMA table_info(uploads)')}:
+                db.execute('ALTER TABLE uploads ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1')
+
     def session(self, uid):
         if not re.fullmatch('[a-f0-9]{32}', uid):
             raise ValueError('上传会话无效')
@@ -79,10 +83,12 @@ class Media:
                 uid = uuid.uuid4().hex
                 with self.lock, self.store.connect() as db:
                     (self.parts / uid).touch()
-                    db.execute('INSERT INTO uploads(id,name,size) VALUES(?,?,?)', (uid, Path(name).name[:255], size))
+                    db.execute('INSERT INTO uploads(id,name,size,user_id) VALUES(?,?,?,?)', (uid, Path(name).name[:255], size,h.auth_user['id']))
                 h.send(201, dict(self.session(uid), chunk_size=CHUNK)); return True
             if h.command == 'POST' and path == '/api/v1/live-pairs':
                 data = self.json_body(h)
+                if not all(self.store.auth.can_media(h.auth_user,data.get(key,''),h.auth_audience) for key in ('photo','video')):
+                    h.send(404,{'error':'媒体不存在'});return True
                 with self.store.connect() as db:
                     photo = db.execute('SELECT * FROM photos WHERE sha256=?', (data.get('photo'),)).fetchone()
                     video = db.execute('SELECT * FROM photos WHERE sha256=?', (data.get('video'),)).fetchone()
@@ -99,10 +105,12 @@ class Media:
             uid, complete = match.groups()
             with self.lock:
                 session = self.session(uid)
+                if session['user_id']!=h.auth_user['id']:
+                    h.send(404,{'error':'上传会话不存在'});return True
                 h.audit_context = {"name":session["name"], "size":session["size"], "offset":session["offset"]}
                 part = self.parts / uid
                 if h.command == 'GET' and not complete:
-                    self.store.log('upload', 'debug', 'resume_queried', uid, '查询上传进度', {'name':session['name'], 'offset':session['offset'], 'size':session['size']})
+                    self.store.log('upload', 'debug', 'resume_queried', uid, '查询上传进度', {'name':session['name'], 'offset':session['offset'], 'size':session['size'],'actor_id':h.auth_user['id']})
                     h.send(200, session); return True
                 if h.command == 'DELETE' and not complete:
                     if not session['sha256']:
@@ -186,6 +194,7 @@ def serve_file(h, path, kind, head=False):
     h.send_header('Content-Type', kind)
     h.send_header('Content-Length', str(end - start + 1))
     h.send_header('Accept-Ranges', 'bytes')
+    h.send_header('Cache-Control', 'private, no-store')
     h.send_header('X-Content-Type-Options', 'nosniff')
     if status == 206:
         h.send_header('Content-Range', f'bytes {start}-{end}/{size}')

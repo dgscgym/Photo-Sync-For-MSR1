@@ -14,7 +14,7 @@ class SetupAuthTests(unittest.TestCase):
         (self.configs/'snapraid.conf').write_text('# test config')
         for name in ['one','two','three']:(self.media/name).mkdir()
         self.server=make_server(root/'data',port=0,library_bases=[self.media],storage_bases=[self.media],snapraid_config_bases=[self.configs])
-        self.thread=threading.Thread(target=self.server.serve_forever,daemon=True);self.thread.start();self.cookie=''
+        self.thread=threading.Thread(target=self.server.serve_forever,daemon=True);self.thread.start();self.cookie='';self.cookies={}
 
     def tearDown(self):
         self.server.shutdown();self.server.server_close();self.thread.join();self.tmp.cleanup()
@@ -24,10 +24,15 @@ class SetupAuthTests(unittest.TestCase):
         body=json.dumps(data).encode() if data is not None else None
         c.request(method or ('POST' if data is not None else 'GET'),path,body,{'Content-Type':'application/json','Cookie':self.cookie if cookie is None else cookie})
         r=c.getresponse();raw=r.read();status=r.status
-        if r.getheader('Set-Cookie') is not None:self.cookie=r.getheader('Set-Cookie').split(';')[0]
+        if r.getheader('Set-Cookie') is not None:
+            key,value=r.getheader('Set-Cookie').split(';')[0].split('=',1);self.cookies[key]=value;self.cookie='; '.join(k+'='+v for k,v in self.cookies.items())
         headers=dict(r.getheaders());c.close()
         try:result=json.loads(raw)
         except (ValueError,UnicodeError):result=raw
+        if isinstance(result,dict) and result.get('mfa_required'):
+            from tests.test_api import finish_mfa
+            response=finish_mfa(self.server,result,lambda path,data:self.call(path,data))
+            return status,response[1],response[2]
         return status,result,headers
 
     def bootstrap(self):
@@ -41,7 +46,7 @@ class SetupAuthTests(unittest.TestCase):
         self.assertEqual(self.call('/setup/welcome')[0],200)
         credentials=self.bootstrap()
         for path in ['welcome','library','snapraid','review']:self.assertEqual(self.call('/setup/'+path)[0],200)
-        self.assertEqual(self.call('/api/v1/uploads',{'name':'x','size':1})[0],403)
+        self.assertEqual(self.call('/api/v1/uploads',{'name':'x','size':1})[0],401)
         sources=[{'path':str(self.media/name)} for name in ['one','two']]
         self.assertEqual(self.call('/api/v1/library/sources/batch',{'sources':sources})[0],201)
         bad=[{'path':str(self.media/'three')},{'path':str(self.media/'one')}]

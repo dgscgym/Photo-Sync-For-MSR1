@@ -13,3 +13,5 @@
 @media(min-width:801px){.stats{grid-template-columns:repeat(3,1fr)}}
 
 .log-row.WARN{border-left:4px solid #d6a545}.log-row.ERROR{border-left:4px solid #c34c57}.log-row.DEBUG{border-left:4px solid #8d9ba9}.log-row.INFO{border-left:4px solid #79a38a}.log-filters select{font:inherit;font-size:13px}
+
+@media(min-width:801px){.stats{grid-template-columns:repeat(4,1fr)}}

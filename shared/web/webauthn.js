@@ -1,0 +1,7 @@
+(() => {
+ const bytes=value=>Uint8Array.from(atob(value.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-value.length%4)%4)),c=>c.charCodeAt(0));
+ const encode=value=>btoa(String.fromCharCode(...new Uint8Array(value))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+ function convert(options){const result=structuredClone(options);result.challenge=bytes(result.challenge);if(result.user)result.user.id=bytes(result.user.id);for(const name of ['allowCredentials','excludeCredentials'])if(result[name])for(const item of result[name])item.id=bytes(item.id);return result;}
+ function serialize(credential){const response={};for(const key of ['clientDataJSON','attestationObject','authenticatorData','signature','userHandle'])if(credential.response[key])response[key]=encode(credential.response[key]);if(credential.response.getTransports)response.transports=credential.response.getTransports();return {id:credential.id,rawId:encode(credential.rawId),type:credential.type,response,authenticatorAttachment:credential.authenticatorAttachment,clientExtensionResults:credential.getClientExtensionResults()};}
+ window.PhotoSyncDevice={async create(options){if(!window.isSecureContext||!navigator.credentials)throw new Error('设备认证需要可信 HTTPS 或本机回环地址');return serialize(await navigator.credentials.create({publicKey:convert(options)}));},async get(options){if(!window.isSecureContext||!navigator.credentials)throw new Error('设备认证不可用');return serialize(await navigator.credentials.get({publicKey:convert(options)}));}};
+})();

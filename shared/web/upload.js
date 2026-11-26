@@ -1,8 +1,10 @@
 (()=>{
-async function api(path,options={}){const response=await fetch(path,options),data=await response.json();if(!response.ok)throw new Error(data.error||'上传请求失败');return data;}
+async function api(path,options={}){const response=await fetch(path,options),data=await response.json();if(response.status===401){const error=new Error('登录已过期，请重新完成认证');error.authRequired=true;location.replace('/client/login');throw error;}if(!response.ok)throw new Error(data.error||'上传请求失败');return data;}
 async function uploadOne(file, progress) {
+  const identity=await api('/api/v1/auth/status?audience=client');
+  if(!identity.authenticated){const error=new Error('请先登录客户端');error.authRequired=true;location.replace('/client/login');throw error;}
   // Metadata is only a resume hint; server hashes the completed bytes for deduplication.
-  const key = 'photosync-upload:' + JSON.stringify([file.name, file.size, file.lastModified]);
+  const key = 'photosync-upload:' + identity.username + ':' + JSON.stringify([file.name, file.size, file.lastModified]);
   let session;
   const id = localStorage.getItem(key);
   if (id) { try { session = await api('/api/v1/uploads/' + id); } catch (_) { localStorage.removeItem(key); } }

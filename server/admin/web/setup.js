@@ -39,7 +39,7 @@ async function initialize(){
  if(!auth.authenticated){location.replace('/login');return;}
  $('admin-form').hidden=true;await refresh();if(current==='snapraid')await loadDisks();
 }
-$('admin-form').onsubmit=event=>{event.preventDefault();action($('admin-form').querySelector('button'),async()=>{await post('/api/v1/auth/bootstrap',{username:$('admin-name').value,password:$('admin-password').value});$('admin-password').value='';$('admin-form').hidden=true;});};
+$('admin-form').onsubmit=async event=>{event.preventDefault();const button=$('admin-form').querySelector('button');button.disabled=true;try{const data=await post('/api/v1/auth/bootstrap',{username:$('admin-name').value,password:$('admin-password').value});$('admin-password').value='';window.PhotoSyncMFA.begin(data,async()=>{await refresh();},$('admin-form'));}catch(error){$('message').textContent=error.message;}finally{button.disabled=false;}};
 initialize().catch(error=>{$('message').textContent=error.message;});
 setInterval(()=>{if(!state)return;refresh().catch(error=>{$('message').textContent=error.message;});},10000);
 const diskChoices=new Map();

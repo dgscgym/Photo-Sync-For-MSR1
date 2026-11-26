@@ -44,9 +44,9 @@ class Store:
         with self.connect() as db:
             if db.execute("SELECT 1 FROM sqlite_master WHERE name='schema_version'").fetchone():
                 current=db.execute('SELECT MAX(version) FROM schema_version').fetchone()[0]
-                if current and current > 5:
+                if current and current > 6:
                     raise ValueError('数据库来自较新版本，请使用兼容版本；禁止自动降级')
-                if current and current < 5:
+                if current and current < 6:
                     import time
                     backups=self.directory/'metadata-backups'
                     backups.mkdir(exist_ok=True)
@@ -70,6 +70,10 @@ class Store:
                     kind TEXT NOT NULL, created_at TEXT NOT NULL);
             ''')
 
+        with self.connect() as db:
+            if 'actor_id' not in {r['name'] for r in db.execute('PRAGMA table_info(audit_logs)')}:
+                db.execute('ALTER TABLE audit_logs ADD COLUMN actor_id INTEGER')
+
         # Preserve pre-0.3 upload history in the new log center exactly once.
         with self.connect() as db:
             db.execute('CREATE TABLE IF NOT EXISTS audit_migrations(name TEXT PRIMARY KEY)')
@@ -89,10 +93,10 @@ class Store:
         level='WARN' if level.upper()=='WARNING' else level.upper()
         if level not in ('INFO','DEBUG','WARN','ERROR'):raise ValueError('无效的日志级别')
         with self.connect() as db:
-            db.execute('INSERT INTO audit_logs(category,level,action,task_id,message,details,created_at) VALUES(?,?,?,?,?,?,?)',
-                       (category, level, action, task_id, message[:1000], json.dumps(details,ensure_ascii=False), datetime.now(timezone.utc).isoformat()))
+            db.execute('INSERT INTO audit_logs(category,level,action,task_id,message,details,created_at,actor_id) VALUES(?,?,?,?,?,?,?,?)',
+                       (category, level, action, task_id, message[:1000], json.dumps(details,ensure_ascii=False), datetime.now(timezone.utc).isoformat(),details.get('actor_id')))
 
-    def logs(self, category='', before=0, level=''):
+    def logs(self, category='', before=0, level='', actor_id=None):
         clauses, values = [], []
         if category:
             clauses.append('category=?'); values.append(category)
@@ -100,6 +104,8 @@ class Store:
             clauses.append('id<?'); values.append(before)
         if level:
             clauses.append("CASE WHEN upper(level)='WARNING' THEN 'WARN' ELSE upper(level) END=?"); values.append('WARN' if level.upper()=='WARNING' else level.upper())
+        if actor_id is not None:
+            clauses.append('actor_id=?');values.append(actor_id)
         query = 'SELECT * FROM audit_logs' + (' WHERE ' + ' AND '.join(clauses) if clauses else '') + ' ORDER BY id DESC LIMIT 100'
         with self.connect() as db:
             rows = [dict(row) for row in db.execute(query,values)]
@@ -155,7 +161,7 @@ class Store:
                                  'encryption': 'not_implemented', 'cloud115': 'not_connected'}}
 
 
-def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, library_bases=(), scan_interval=300, storage_bases=(), snapraid_config_bases=(), secure_cookies=False):
+def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, library_bases=(), scan_interval=300, storage_bases=(), snapraid_config_bases=(), secure_cookies=False, webauthn_origin=None):
     store = Store(directory)
     media = Media(store)
     library = Library(store, library_bases, scan_interval)
@@ -164,10 +170,11 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, li
     persisted=store.directory/'snapraid-monitor.json'
     monitor = Monitor(store, snapraid_config or (str(persisted) if persisted.exists() else None))
     auth=Auth(store,secure_cookies)
+    store.auth=auth
     setup = Setup(store,library,monitor,storage_bases,snapraid_config_bases, bool(snapraid_config))
     with store.connect() as db:
         db.execute("DELETE FROM schema_version")
-        db.execute("INSERT INTO schema_version VALUES(5)")
+        db.execute("INSERT INTO schema_version VALUES(6)")
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -175,8 +182,11 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, li
 
         def send(self, status, body, media_type='application/json', **headers):
             path = urlsplit(self.path).path
+            if self.command=='POST' and status in (200,201) and isinstance(body,dict) and body.get('sha256') and getattr(self,'auth_user',None) and path.startswith(('/api/v1/uploads','/api/v1/photos')):
+                with store.connect() as db:db.execute('INSERT OR IGNORE INTO photo_access VALUES(?,?)',(self.auth_user['id'],body['sha256']))
             if self.command in ('POST', 'PATCH', 'DELETE') and path.startswith(('/api/v1/uploads', '/api/v1/photos', '/api/v1/live-pairs')):
                 context = dict(getattr(self, 'audit_context', {}))
+                if getattr(self,'auth_user',None):context['actor_id']=self.auth_user['id']
                 if isinstance(body, dict):
                     context.update({key:body[key] for key in ('sha256','duplicate','offset','id','error') if key in body})
                 context.update(http_status=status, method=self.command,
@@ -230,6 +240,10 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, li
                     return self.send(404, {'error': '预览尚未生成'})
                 except ValueError:
                     return self.send(404, {'error': '资源不存在'})
+            if path=='/api/v1/client/logs':
+                query=parse_qs(urlsplit(self.path).query)
+                try:return self.send(200,store.logs('upload',int(query.get('before',['0'])[0]),query.get('level',[''])[0],self.auth_user['id']))
+                except ValueError:return self.send(400,{'error':'无效分页参数'})
             if path == '/api/v1/logs':
                 query = parse_qs(urlsplit(self.path).query)
                 try:
@@ -239,7 +253,12 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, li
             if path == '/api/v1/snapraid':
                 return self.send(200, monitor.snapshot())
             if path == '/api/v1/client/status':
-                state=store.snapshot();return self.send(200,{key:state[key] for key in ('version','photos','stats')})
+                state=store.snapshot()
+                state['photos']=[p for p in state['photos'] if auth.can_media(self.auth_user,p['sha256'])]
+                for photo in state['photos']:
+                    if photo['live_video'] and not auth.can_media(self.auth_user,photo['live_video']):photo['live_video']=None
+                state['stats']={'photos':len(state['photos']),'bytes':sum(p['size'] for p in state['photos'])}
+                return self.send(200,{key:state[key] for key in ('version','photos','stats')})
             if path == '/api/v1/status':
                 return self.send(200, store.snapshot())
             if path.startswith('/api/v1/photos/'):
@@ -255,13 +274,22 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, li
             if path in ('/login','/client/login'):
                 page=(ROOT/'server/admin/web'/'login.html').read_text()
                 page=page.replace('href="/"','href="/client"' if path=='/client/login' else 'href="/admin"')
+                page=page.replace('登录，回到你的回忆。','客户端登录' if path=='/client/login' else '服务端管理登录')
                 return self.send(200,page.encode(),'text/html; charset=utf-8')
             if path.startswith('/setup') and path in ('/setup','/setup/welcome','/setup/library','/setup/snapraid','/setup/review'):
                 return self.send(200,(ROOT/'server/admin/web'/'setup.html').read_bytes(),'text/html; charset=utf-8')
             if path=='/admin/settings/snapraid':return self.send(302,b'',Location='/admin/settings#snapraid')
-            if path in ('/client/settings','/admin/settings'):
+            if path in ('/client/settings','/admin/settings','/client/logs','/admin/logs'):
                 home='/client' if path.startswith('/client') else '/admin'
-                page=(ROOT/'shared/web/settings.html').read_text().replace('__HOME__',home).replace('__LABEL__','客户端' if home=='/client' else '管理台')
+                profile=(ROOT/'shared/web/profile.fragment.html').read_text().replace('__SETTINGS__',home+'/settings').replace('__HOME__',home)
+                if path.endswith('/logs'):
+                    page=(ROOT/'shared/web/logs.html').read_text()
+                    if home=='/client':
+                        import re
+                        page=re.sub(r'<select id="log-category">.*?</select>','<select id="log-category" disabled><option value="upload">上传</option></select>',page,flags=re.S)
+                elif home=='/client':page=(ROOT/'client/settings.html').read_text().replace('__PROFILE__',profile)
+                else:page=(ROOT/'shared/web/settings.html').read_text()
+                page=page.replace('__HOME__',home).replace('__LABEL__','客户端' if home=='/client' else '管理台').replace('__SETTINGS__',home+'/settings')
                 return self.send(200,page.encode(),'text/html; charset=utf-8')
             pages={'/admin':('server/admin/web/index.html','text/html; charset=utf-8'),
                    '/client':('client/index.html','text/html; charset=utf-8'),
@@ -274,7 +302,7 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, li
                 '/client/assets/style.css':('client/style.css','text/css; charset=utf-8')}
             for filename in ('app.js','setup.js','login.js','snapraid.js','style.css','setup.css'):
                 assets['/admin/assets/'+filename]=('server/admin/web/'+filename,'text/css; charset=utf-8' if filename.endswith('.css') else 'text/javascript; charset=utf-8')
-            for filename in ('profile.js','profile.css','settings.js','settings.css','upload.js','snapraid.js','directory-picker.js'):
+            for filename in ('profile.js','profile.css','settings.js','settings.css','upload.js','snapraid.js','directory-picker.js','webauthn.js','mfa.js','client-settings.js','logs.js'):
                 assets['/shared/assets/'+filename]=('shared/web/'+filename,'text/css; charset=utf-8' if filename.endswith('.css') else 'text/javascript; charset=utf-8')
             aliases={'/app.js':'/admin/assets/app.js','/style.css':'/admin/assets/style.css','/setup.js':'/admin/assets/setup.js','/setup.css':'/admin/assets/setup.css','/login.js':'/admin/assets/login.js'}
             path=aliases.get(path,path)
@@ -357,6 +385,8 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, li
             previews.pool.shutdown(wait=True)
             super().server_close()
     server = Server((host, port), Handler)
+    if webauthn_origin:auth.configure_origin(webauthn_origin)
+    elif host in ('127.0.0.1','localhost'):auth.configure_origin(f'http://{host}:{server.server_port}')
     server.auth = auth
     server.monitor = monitor
     server.library = library
@@ -374,8 +404,9 @@ if __name__ == '__main__':
     parser.add_argument('--storage-base', action='append', default=[], help='SnapRAID 磁盘目录授权范围')
     parser.add_argument('--snapraid-config-base', action='append', default=[], help='现有 SnapRAID 配置文件授权范围')
     parser.add_argument('--secure-cookies', action='store_true', help='HTTPS 部署时使用 Secure 会话 Cookie')
+    parser.add_argument('--webauthn-origin', help='可信的 HTTPS origin；本机回环地址自动配置')
     args = parser.parse_args()
-    server = make_server(args.data, args.host, args.port, args.snapraid_monitor_config, args.library_base, args.scan_interval, args.storage_base, args.snapraid_config_base, args.secure_cookies)
+    server = make_server(args.data, args.host, args.port, args.snapraid_monitor_config, args.library_base, args.scan_interval, args.storage_base, args.snapraid_config_base, args.secure_cookies, args.webauthn_origin)
     print(f'PhotoSync {VERSION}: http://{args.host}:{args.port}', flush=True)
     try:
         server.serve_forever()
