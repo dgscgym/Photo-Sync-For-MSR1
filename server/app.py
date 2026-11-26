@@ -255,6 +255,10 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, li
                 return self.send(200,page.encode(),'text/html; charset=utf-8')
             if path.startswith('/setup') and path in ('/setup','/setup/welcome','/setup/library','/setup/snapraid','/setup/review'):
                 return self.send(200,(ROOT/'server/admin/web'/'setup.html').read_bytes(),'text/html; charset=utf-8')
+            if path in ('/client/settings','/admin/settings'):
+                home='/client' if path.startswith('/client') else '/admin'
+                page=(ROOT/'shared/web/settings.html').read_text().replace('__HOME__',home).replace('__LABEL__','客户端' if home=='/client' else '管理台')
+                return self.send(200,page.encode(),'text/html; charset=utf-8')
             pages={'/admin':('server/admin/web/index.html','text/html; charset=utf-8'),
                    '/client':('client/index.html','text/html; charset=utf-8'),
                    '/admin/settings/snapraid':('server/admin/web/snapraid.html','text/html; charset=utf-8')}
@@ -266,6 +270,8 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, li
                 '/client/assets/style.css':('client/style.css','text/css; charset=utf-8')}
             for filename in ('app.js','setup.js','login.js','snapraid.js','style.css','setup.css'):
                 assets['/admin/assets/'+filename]=('server/admin/web/'+filename,'text/css; charset=utf-8' if filename.endswith('.css') else 'text/javascript; charset=utf-8')
+            for filename in ('profile.js','profile.css','settings.js','settings.css','upload.js','snapraid.js','directory-picker.js'):
+                assets['/shared/assets/'+filename]=('shared/web/'+filename,'text/css; charset=utf-8' if filename.endswith('.css') else 'text/javascript; charset=utf-8')
             aliases={'/app.js':'/admin/assets/app.js','/style.css':'/admin/assets/style.css','/setup.js':'/admin/assets/setup.js','/setup.css':'/admin/assets/setup.css','/login.js':'/admin/assets/login.js'}
             path=aliases.get(path,path)
             if path in assets:

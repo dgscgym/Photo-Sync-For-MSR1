@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 from .media import media_type
+from .directory_browser import route as browse_route, review_token
 
 
 def now():
@@ -75,6 +76,7 @@ class Library:
         prepared=[]
         for entry in entries:
             root=self.allowed(entry['path'])
+            if entry.get('review_token') and entry['review_token']!=review_token(root):raise ValueError('目录变化，请重新查看')
             name=entry.get('name','')
             if not isinstance(name,str):raise ValueError('名称无效')
             prepared.append((root,name,entry.get('source_id')))
@@ -160,6 +162,7 @@ class Library:
             if self.stop.wait(self.interval): break
 
     def route(self,h):
+        if browse_route(self,h):return True
         path=urlsplit(h.path).path
         if not path.startswith('/api/v1/library'):return False
         try:
@@ -182,7 +185,7 @@ class Library:
                 if path=='/api/v1/library/sources/batch':
                     ids=self.add_many(data['sources']);h.send(201,{'ids':ids});return True
                 if path=='/api/v1/library/sources':
-                    sid=self.add(data['path'],data.get('name',''),data.get('source_id'))
+                    sid=self.add_many([data])[0]
                     h.send(201,{'id':sid});return True
             h.send(404,{'error':'接口不存在'});return True
         except (ValueError,OSError,KeyError,TypeError):

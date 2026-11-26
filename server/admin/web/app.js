@@ -3,7 +3,7 @@ const names={overview:'服务概览',library:'照片库',backup:'加密备份',s
 for(const button of document.querySelectorAll('nav button'))button.onclick=()=>{for(const key of Object.keys(names))$(key).hidden=key!==button.dataset.view;document.querySelector('nav .active').classList.remove('active');button.classList.add('active');$('breadcrumb').textContent=names[button.dataset.view];};
 const bytes=n=>n>=1024**3?(n/1024**3).toFixed(2)+' GiB':(n/1024**2).toFixed(1)+' MiB';
 async function api(path,options={}){const response=await fetch(path,options),data=await response.json();if(response.status===401){location.replace('/login');throw new Error('请先登录');}if(!response.ok)throw new Error(data.error||'请求失败');return data;}
-async function refresh(){const state=await api('/api/v1/status');$('version').textContent='v'+state.version+' · 服务端';$('count').textContent=state.stats.photos;$('size').textContent=bytes(state.stats.bytes);$('duplicates').textContent=state.stats.duplicates;renderPhotos(state.photos);await loadLogs();await refreshStorage();}
+async function refresh(){const state=await api('/api/v1/status');$('version').textContent='v'+state.version+' · 服务端';$('count').textContent=state.stats.photos;$('size').textContent=bytes(state.stats.bytes);renderPhotos(state.photos);await loadLogs();await refreshStorage();}
 const stateNames = {unknown:'状态未知', warning:'需要关注', critical:'严重异常', healthy:'正常'};
 let logRows = [], logBefore = null;
 function renderLogs(target, rows) {
@@ -76,7 +76,7 @@ async function refreshLibrary(first = false) {
       const path = document.createElement('p'); path.textContent = source.path;
       const status = document.createElement('p'); status.textContent = `${source.state} · ${source.message} · 最近扫描 ${source.last_scan ? new Date(source.last_scan).toLocaleString() : '尚无'}`;
       const bind = document.createElement('button'); bind.textContent = '磁盘路径变了？重新绑定';
-      bind.onclick = () => { $('source-id').value = source.id; $('source-path').value = source.path; $('source-name').value = source.name; $('source-path').focus(); };
+      bind.onclick = () => window.PhotoSyncDirectoryPicker.open({sourceId:source.id,onSaved:refreshLibrary});
       card.append(title,path,status,bind); $('source-list').append(card);
     }
     $('library-scan').disabled = state.scanning;
@@ -86,20 +86,7 @@ async function refreshLibrary(first = false) {
     if (first && !state.setup_complete) location.replace('/setup/welcome');
   } catch (error) { $('library-message').textContent = '目录状态读取失败：' + error.message; }
 }
-$('source-add').onclick = async () => {
-  $('source-add').disabled = true;
-  try {
-    const paths=$('source-path').value.split('\n').map(s=>s.trim()).filter(Boolean);
-    if(!paths.length)throw new Error('请输入目录');
-    const rebind=$('source-id').value;
-    if(rebind && paths.length!==1)throw new Error('重新绑定仅能指定一个目录');
-    await api(rebind?'/api/v1/library/sources':'/api/v1/library/sources/batch', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(rebind?{path:paths[0],source_id:rebind}:{sources:paths.map(path=>({path}))})});
-    $('source-id').value = ''; $('source-path').value = ''; $('source-name').value = '';
-    $('library-message').textContent = '目录已登记，正在后台扫描；不会复制、移动或删除原文件。';
-    await refreshLibrary(); setTimeout(refreshLibrary, 1500);
-  } catch (error) { $('library-message').textContent = error.message; }
-  finally { $('source-add').disabled = false; }
-};
+$('source-add').onclick=()=>window.PhotoSyncDirectoryPicker.open({onSaved:async()=>{await refreshLibrary();$('library-message').textContent='目录已确认添加，后台扫描中。';}});
 $('library-scan').onclick = async () => {
   try { await api('/api/v1/library/scan',{method:'POST'}); $('library-message').textContent = '扫描已请求，请稍候。'; setTimeout(refreshLibrary,1500); }
   catch (error) { $('library-message').textContent = error.message; }
@@ -113,7 +100,6 @@ $('library-export').onclick = async () => {
 };
 refreshLibrary(true); setInterval(() => refreshLibrary(),15000);
 
-$('logout').onclick=async()=>{await api('/api/v1/auth/logout',{method:'POST'});location.replace('/login');};
 
 refresh().catch(error=>{$('notice').textContent=error.message;});
 

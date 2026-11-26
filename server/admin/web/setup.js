@@ -29,11 +29,7 @@ async function refresh() {
   if(state.snapraid_mode==='pending')display($('summary'),'请返回 SnapRAID 步骤，接入已有配置或明确选择暂不启用。');
 }
 async function action(button,work) {button.disabled=true;$('message').textContent='';try{await work();await refresh();}catch(error){$('message').textContent=error.message;}finally{button.disabled=false;if(state){$('preview-plan').disabled=state.snapraid_locked||!!state.disk_plan||state.snapraid.configured;$('save-plan').disabled=!pendingPlan||!!state.disk_plan||state.snapraid_locked;$('skip-snap').disabled=state.snapraid.configured || !!state.disk_plan;$('finish').disabled=state.snapraid_mode==='pending';}}}
-$('add-paths').onclick=()=>action($('add-paths'),async()=>{
-  const paths=$('paths').value.split('\n').map(s=>s.trim()).filter(Boolean);
-  if(!paths.length)throw new Error('请输入至少一个目录');
-  await post('/api/v1/library/sources/batch',{sources:paths.map(path=>({path}))});$('paths').value='';$('message').textContent=`已登记 ${paths.length} 个目录，后台扫描中。`;
-});
+$('add-paths').onclick=()=>window.PhotoSyncDirectoryPicker.open({onSaved:async()=>{await refresh();$('message').textContent='目录已确认添加，可继续添加其他目录。';}});
 // Disk planner handlers are registered below.
 $('skip-snap').onclick=()=>action($('skip-snap'),()=>post('/api/v1/setup/snapraid',{skip:true}));
 $('finish').onclick=()=>action($('finish'),async()=>{await post('/api/v1/setup/finish',{});location.replace('/login');});

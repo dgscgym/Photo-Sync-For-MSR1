@@ -52,7 +52,7 @@ class Auth:
         path=urlsplit(h.path).path
         if path.startswith('/api/v1/auth/'):
             if h.command=='GET' and path=='/api/v1/auth/status':
-                h.send(200,{'admin_exists':bool(self.account()),'authenticated':self.authenticated(h),'setup_complete':self.complete()});return True
+                h.send(200,{'admin_exists':bool(self.account()),'authenticated':self.authenticated(h),'setup_complete':self.complete(),'username':self.account()['username'] if self.authenticated(h) and self.account() else None});return True
             if h.command!='POST':h.send(405,{'error':'方法不支持'});return True
             if h.headers.get('Sec-Fetch-Site')=='cross-site':h.send(403,{'error':'不允许跨站请求'});return True
             try:
@@ -87,7 +87,7 @@ class Auth:
             except (ValueError,TypeError):h.send(400,{'error':'无效的登录请求'});return True
             except Exception:h.send(409,{'error':'账户创建失败或请求冲突，请重试'});return True
         public=('/login','/login.js','/setup.js','/setup.css','/app.js','/style.css')
-        if path in public or path.startswith(('/admin/assets/','/client/assets/')) or path=='/client/login':return False
+        if path in public or path.startswith(('/admin/assets/','/client/assets/','/shared/assets/')) or path=='/client/login':return False
         if not self.account() and path in ('/setup','/setup/welcome'):return False
         if not self.authenticated(h):
             if path.startswith('/api/'):
