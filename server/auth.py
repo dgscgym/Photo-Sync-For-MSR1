@@ -248,7 +248,7 @@ class Auth:
                 db.execute('DELETE FROM login_attempts WHERE client=?',(pending['client_key'],))
                 if full:db.execute('UPDATE passkeys SET trusted_until=? WHERE user_id=?',(full+7*86400,user['id']))
             self.store.log('auth','INFO','login_succeeded',str(user['id']),'双因素登录成功',{'audience':pending['audience'],'method':'device' if not full else 'totp_or_recovery'})
-            h.send(200,{'ok':True,'setup_complete':self.complete(),'audience':pending['audience'],'recovery_codes':recovery},Set_Cookie=self.session(user,pending['audience'],full,key['trusted_until'] if not full else None));return
+            h.send(200,{'ok':True,'setup_complete':self.complete(),'audience':pending['audience'],'username':user['username'],'recovery_codes':recovery},Set_Cookie=self.session(user,pending['audience'],full,key['trusted_until'] if not full else None));return
         if path in ('/api/v1/auth/passkey/register/options','/api/v1/auth/passkey/register/verify'):
             user=self.current(h,'client')
             if not user or not user['full_mfa_at'] or time.time()-user['full_mfa_at']>300:raise ValueError('请先使用密码和 2FA 登录客户端，再登记设备')
@@ -321,7 +321,7 @@ class Auth:
         if path in public or path.startswith(('/admin/assets/','/client/assets/','/shared/assets/')):return False
         if not self.account() and path in ('/setup','/setup/welcome'):return False
         client_paths=path.startswith(('/client','/api/v1/client'))
-        if path.startswith(('/api/v1/photos','/api/v1/previews','/api/v1/live-pairs','/api/v1/uploads','/api/v1/media-details')):
+        if path.startswith(('/api/v1/photos','/api/v1/previews','/api/v1/live-pairs','/api/v1/uploads','/api/v1/media-details','/api/v1/thumbnails')):
             selected=parse_qs(urlsplit(h.path).query).get('app',[None])[0]
             audience=selected if selected in ('admin','client') else ('client' if self.cookie(h,'client') else 'admin')
         else:audience='client' if client_paths else 'admin'
@@ -338,7 +338,7 @@ class Auth:
             if path in ('/','/admin','/client'):h.send(302,b'',Location='/client/login' if path=='/client' else '/setup/library')
             else:h.send(403,{'error':'请先完成初始化'})
             return True
-        if path.startswith(('/api/v1/photos/','/api/v1/previews/','/api/v1/media-details/')):
+        if path.startswith(('/api/v1/photos/','/api/v1/previews/','/api/v1/media-details/','/api/v1/thumbnails/')):
             digest=path.rsplit('/',1)[-1]
             if not self.can_media(user,digest,audience):h.send(404,{'error':'媒体不存在'});return True
         return False

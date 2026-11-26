@@ -1,0 +1,20 @@
+services:
+  photosync:
+    build: .
+    image: photosync:0.12.0
+    ports:
+      - "8080:8080"
+    volumes:
+      - photosync-data:/data
+      # Map existing original directories under /media; originals are read-only.
+      # - /your/photo/disk:/media/family:ro
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Put HTTPS in front of this service for remote use. Then add
+    # --secure-cookies to command and set --webauthn-origin for browser passkeys.
+volumes:
+  photosync-data:

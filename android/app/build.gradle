@@ -1,0 +1,20 @@
+plugins { id 'com.android.application' }
+android {
+    namespace = 'com.photosync.android'
+    useLibrary "android.test.runner", false
+    useLibrary "android.test.base", false
+    compileSdk = 36
+    buildToolsVersion = "36.0.0"
+    if (System.getenv("PHOTOSYNC_DEBUG_KEYSTORE")) { signingConfigs { debug { storeFile = file(System.getenv("PHOTOSYNC_DEBUG_KEYSTORE")) } } }
+    defaultConfig {
+        applicationId = 'com.photosync.android'
+        minSdk = 26
+        targetSdk = 36
+        versionCode = 1200
+        versionName = '0.12.0'
+        testInstrumentationRunner = 'android.test.InstrumentationTestRunner'
+    }
+    buildFeatures { buildConfig = true }
+    compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+    lint { abortOnError = true }
+}

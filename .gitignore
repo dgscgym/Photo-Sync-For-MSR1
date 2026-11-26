@@ -5,3 +5,8 @@ __pycache__/
 .venv/
 .env
 .DS_Store
+/android/.gradle/
+/android/local.properties
+/android/**/build/
+/android/*.jks
+/android/*.keystore

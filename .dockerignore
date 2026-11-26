@@ -1,0 +1,9 @@
+.git
+.venv
+key
+data
+android
+outputs
+work
+**/__pycache__
+.env

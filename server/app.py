@@ -16,6 +16,7 @@ from .monitor import Monitor
 from .library import Library
 from .setup import Setup
 from .auth import Auth
+from .thumbnails import Thumbnails
 from .metadata import inspect as inspect_media
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -181,6 +182,7 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, li
     library = Library(store, library_bases, scan_interval)
     store.library = library
     previews = Previews(store)
+    thumbnails = Thumbnails(store)
     persisted=store.directory/'snapraid-monitor.json'
     monitor = Monitor(store, None if prototype else (snapraid_config or (str(persisted) if persisted.exists() else None)))
     auth=Auth(store,secure_cookies,prototype)
@@ -273,6 +275,12 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, li
                     if photo['live_video'] and not auth.can_media(self.auth_user,photo['live_video']):photo['live_video']=None
                 state['stats']={'photos':len(state['photos']),'bytes':sum(p['size'] for p in state['photos'])}
                 return self.send(200,{key:state[key] for key in ('version','photos','stats')})
+            if path.startswith('/api/v1/thumbnails/'):
+                digest=path.rsplit('/',1)[-1]
+                if not auth.can_media(self.auth_user,digest,self.auth_audience):return self.send(404,{'error':'媒体不存在'})
+                if len(digest)!=64 or any(char not in '0123456789abcdef' for char in digest):return self.send(404,{'error':'媒体不存在'})
+                try:return serve_file(self,thumbnails.get(digest),'image/jpeg',self.command=='HEAD')
+                except ValueError as error:return self.send(415,{'error':str(error)})
             if path.startswith('/api/v1/media-details/'):
                 digest=path.rsplit('/',1)[-1]
                 if not auth.can_media(self.auth_user,digest,self.auth_audience):return self.send(404,{'error':'媒体不存在'})
