@@ -4,8 +4,6 @@
  async function api(path,settings={}){const response=await fetch(path,settings),data=await response.json();if(!response.ok)throw new Error(data.error||'读取失败');return data;}
  const within=(path,parent)=>path===parent||path.startsWith(parent.replace(/\/$/,'')+'/');
  function coverage(path){
-  const saved=existing.find(source=>source.id!==options.sourceId&&within(path,source.path));
-  if(saved)return '已添加的目录已包含此位置';
   if([...selected.keys(),...pending.keys()].some(parent=>parent!==path&&within(path,parent)))return '父目录已包含';
   return '';
  }
@@ -30,7 +28,7 @@
    if(pending.get(path)!==version)return;
    pending.delete(path);
    if(options.sourceId)selected.clear();
-   selected.set(path,{path,review_token:data.review_token,existing:existing.some(source=>source.path===path&&source.id!==options.sourceId)});update();
+   selected.set(path,{path,review_token:data.review_token,existing:existing.some(source=>within(path,source.path)&&source.id!==options.sourceId)});update();
 
   }catch(error){if(pending.get(path)!==version)return;pending.delete(path);preview.replaceChildren(el('p',error.message));}
   syncChecks();update();
