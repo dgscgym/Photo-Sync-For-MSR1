@@ -6,7 +6,7 @@
  function create(){
   dialog=el('dialog');dialog.className='directory-picker';dialog.setAttribute('aria-label','选择相册目录并确认内容');
   const heading=el('div');heading.className='picker-heading';heading.append(el('h2','选择相册目录'));const close=el('button','关闭 ×');close.onclick=()=>dialog.close();heading.append(close);
-  view=el('div');preview=el('div');preview.className='picker-selection-preview';const footer=el('div');footer.className='picker-footer';const add=el('button','确认添加选中的目录（0）');add.id='picker-confirm';add.className='primary';add.onclick=confirm;
+  view=el('div');preview=el('div');preview.className='picker-message';preview.setAttribute('role','status');const footer=el('div');footer.className='picker-footer';const add=el('button','确认添加选中的目录（0）');add.id='picker-confirm';add.className='primary';add.onclick=confirm;
   footer.append(add);dialog.append(heading,view,preview,footer);document.body.append(dialog);
  }
  async function choose(path,checked){
@@ -14,28 +14,26 @@
   if(!checked){pending.delete(path);selected.delete(path);preview.replaceChildren();syncChecks();update();return;}
   if(options.sourceId){selected.clear();pending.clear();}
   pending.set(path,version);update();
-  preview.replaceChildren(el('p','读取所选目录内容…'));
+  preview.replaceChildren();
   try{const data=await api('/api/v1/library/browse?'+new URLSearchParams({path}));
    if(pending.get(path)!==version)return;
    pending.delete(path);
    if(options.sourceId)selected.clear();
    selected.set(path,{path,review_token:data.review_token,existing:existing.some(source=>source.path===path&&source.id!==options.sourceId)});update();
-   preview.replaceChildren(el('h3','已选目录内容预览'),el('p',path),el('p',`共 ${data.total} 项，已选 ${selected.size} 个目录。`));
-   if(selected.get(path).existing)preview.append(el('p','此目录已经添加，将保留原有记录。'));
-   const list=el('ul');for(const item of data.entries.slice(0,8))list.append(el('li',(item.directory?'📁 ':'▧ ')+item.name));preview.append(list);
+
   }catch(error){if(pending.get(path)!==version)return;pending.delete(path);preview.replaceChildren(el('p',error.message));}
   syncChecks();update();
  }
  function syncChecks(){for(const input of dialog.querySelectorAll('input[data-path]'))input.checked=selected.has(input.dataset.path)||pending.has(input.dataset.path);}
  function directoryRow(path,name){
-  const row=el('div');row.className='picker-directory-row';const label=el('label');label.className='picker-check';const input=el('input');input.type='checkbox';input.dataset.path=path;input.checked=selected.has(path)||pending.has(path);input.setAttribute('aria-label','选择目录 '+name);
-  input.onchange=()=>choose(path,input.checked);label.append(input,el('span','📁 '+name));const open=el('button','打开查看');open.onclick=()=>browse(path);row.append(label,open);return row;
+  const row=el('div');row.className='picker-directory-row';const input=el('input');input.type='checkbox';input.dataset.path=path;input.checked=selected.has(path)||pending.has(path);input.setAttribute('aria-label','选择目录 '+name);
+  input.onchange=()=>choose(path,input.checked);const open=el('button','📁 '+name);open.className='picker-directory-name';open.onclick=()=>browse(path);row.append(input,open);return row;
  }
  async function browse(path='',offset=0){
   const generation=++renderId;view.replaceChildren(el('p','读取目录中…'));update();
   try{const data=await api('/api/v1/library/browse?'+new URLSearchParams({path,offset}));if(generation!==renderId)return;view.replaceChildren();
    const tools=el('div');tools.className='picker-tools';const roots=el('button','全部授权位置');roots.onclick=()=>browse();tools.append(roots);
-   if(data.parent){const up=el('button','上一级');up.onclick=()=>browse(data.parent);tools.append(up);}view.append(tools,el('p',data.path||'勾选需要添加的目录，也可打开查看内容。'));
+   if(data.parent){const up=el('button','上一级');up.onclick=()=>browse(data.parent);tools.append(up);}view.append(tools,el('p',data.path||'勾选目录以添加，点击目录名称进入下一级。'));
    if(!data.path){if(!data.roots.length)view.append(el('p','暂无授权位置，请在部署时映射媒体目录。'));for(const root of data.roots)view.append(directoryRow(root,root));return;}
    view.append(directoryRow(data.path,'选择当前目录'),el('p',`目录内共 ${data.total} 项`));const list=el('div');list.className='picker-list';
    for(const item of data.entries){
