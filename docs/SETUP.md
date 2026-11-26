@@ -1,5 +1,7 @@
 # 独立初始化与登录
 
+0.7.0 起，日常 SnapRAID 调整使用 `/admin/settings/snapraid`，不进入本初始化流程。前端代码位于 `server/admin/web/`；客户端入口为 `/client`。
+
 0.6.0 已将主要 SnapRAID 初始化入口改为图形化磁盘与模式选择，见 [SNAPRAID-DISKS.md](SNAPRAID-DISKS.md)。下文已有配置接入描述保留为高级兼容路线。
 
 ## 首次使用顺序

@@ -1,4 +1,6 @@
-# 0.6.0 · 图形化磁盘与保护模式
+# 图形化磁盘与保护模式
+
+0.7.0 新增独立 `/admin/settings/snapraid` 页面，支持未同步方案的受控调整；详见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
 参考 OMV 的 Data / Parity / Content 角色设计，将首次配置的主要入口改为“选择磁盘 → 选择模式 → 检查方案 → 确认保存”。用户无需填写 snapraid.conf。
 

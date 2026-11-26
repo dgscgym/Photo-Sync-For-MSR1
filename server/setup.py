@@ -1,5 +1,6 @@
 """Independent onboarding endpoints. Never formats disks or starts parity sync."""
 import json
+import hashlib
 from pathlib import Path
 from urllib.parse import urlsplit
 from .disks import inventory, build_plan
@@ -27,14 +28,23 @@ class Setup:
         return {'library':self.library.snapshot(),'snapraid':self.monitor.snapshot(),
                 'snapraid_mode':row['value'] if row else ('connected' if self.monitor.config else 'pending'),
                 'storage_bases':[str(p) for p in self.storage], 'config_bases':[str(p) for p in self.configs],
-                'snapraid_locked':self.locked,'disk_plan':json.loads(plan['value']) if plan else None}
+                'snapraid_locked':self.locked,'disk_plan':json.loads(plan['value']) if plan else None,
+                'plan_revision':hashlib.sha256(plan['value'].encode()).hexdigest() if plan else None}
 
     def route(self,h):
         path=urlsplit(h.path).path
+        settings_request=path.startswith('/api/v1/snapraid/settings')
+        if settings_request:
+            if path.endswith('/disks'):path='/api/v1/setup/disks'
+            elif path=='/api/v1/snapraid/settings':path='/api/v1/setup' if h.command=='GET' else '/api/v1/setup/snapraid'
+            else:return False
         if not path.startswith('/api/v1/setup'):return False
         try:
             if h.command=='GET' and path=='/api/v1/setup/disks':h.send(200,{'disks':inventory(self.storage)});return True
-            if h.command=='GET' and path=='/api/v1/setup':h.send(200,self.snapshot());return True
+            if h.command=='GET' and path=='/api/v1/setup':
+                state=self.snapshot()
+                if settings_request:state={key:state[key] for key in ('snapraid','snapraid_mode','snapraid_locked','disk_plan','plan_revision','storage_bases')}
+                h.send(200,state);return True
             if h.command=='POST' and path=='/api/v1/setup/finish':
                 if h.headers.get('Sec-Fetch-Site')=='cross-site':h.send(403,{'error':'不允许跨站请求'});return True
                 if self.snapshot()['snapraid_mode']=='pending':raise ValueError('请先完成 SnapRAID 选择')
@@ -53,25 +63,33 @@ class Setup:
                     mode='skipped'
                 elif 'mode' in data:
                     if self.locked or self.monitor.config:raise ValueError('已有受管理配置不能直接更换阵列，请先完成迁移设计')
-                    plan=build_plan(data,inventory(self.storage))
+                    disks=inventory(self.storage)
+                    plan=build_plan(data,disks)
                     if data.get('preview') is True:
                         h.send(200,plan);return True
                     if data.get('confirmed') is not True:raise ValueError('请先预览并确认磁盘方案')
                     with self.store.connect() as db:
                         db.execute('BEGIN IMMEDIATE')
                         previous=db.execute("SELECT value FROM app_settings WHERE key='snapraid_plan'").fetchone()
-                        if previous:raise ValueError('已有阵列方案，请勿覆盖；后续提供受控变更流程')
+                        if previous:
+                            revision=hashlib.sha256(previous['value'].encode()).hexdigest()
+                            if not settings_request or data.get('expected_revision')!=revision:raise ValueError('方案已变化，请刷新后重新检查')
+                            old=json.loads(previous['value'])
+                            discovered={d['id']:d for d in disks}
+                            for disk in old['disks']:
+                                actual=discovered.get(disk['id'])
+                                if not actual or not actual['selectable'] or actual['device_key']!=disk['device_key']:raise ValueError('已有磁盘状态变化，不能直接调整')
                         directory=self.store.directory/'snapraid'
                         directory.mkdir(exist_ok=True)
                         target=directory/'snapraid.conf'
-                        if target.exists():raise ValueError('已有配置文件，拒绝覆盖')
+                        if target.exists() and (not previous or target.read_text()!=json.loads(previous['value'])['configuration']):raise ValueError('配置被外部修改，拒绝覆盖')
                         temporary=directory/'snapraid.conf.tmp'
                         temporary.write_text(plan['configuration'])
                         temporary.replace(target)
-                        db.execute("INSERT INTO app_settings VALUES('snapraid_plan',?)",(json.dumps(plan,ensure_ascii=False),))
+                        db.execute("INSERT OR REPLACE INTO app_settings VALUES('snapraid_plan',?)",(json.dumps(plan,ensure_ascii=False),))
                         db.execute("INSERT OR REPLACE INTO app_settings VALUES('snapraid_setup_mode','planned')")
                     self.store.log('snapraid','warning','disk_plan_saved','','磁盘方案已保存，等待首次同步',{'mode':plan['mode'],'disks':len(plan['disks'])})
-                    h.send(200,self.snapshot());return True
+                    h.send(200,self.snapshot() if not settings_request else {'saved':True});return True
                 else:
                     if self.locked:raise ValueError('配置由服务端启动参数管理')
                     cfg=self.inside(data['snapraid_config'],self.configs,False)

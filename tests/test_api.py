@@ -73,7 +73,9 @@ class ApiTests(unittest.TestCase):
         self.assertFalse(list(Path(self.tmp.name).glob('tmp*')))
 
     def test_static_routes_and_path_boundaries(self):
-        self.assertEqual(self.request('GET', '/')[0], 200)
+        self.assertEqual(self.request('GET', '/')[0], 302)
+        self.assertEqual(self.request('GET', '/admin')[0], 200)
+        self.assertEqual(self.request('GET', '/client')[0], 200)
         self.assertEqual(self.request('GET', '/style.css')[0], 200)
         self.assertEqual(self.request('GET', '/api/v1/photos/../../key/key.txt')[0], 404)
         self.assertEqual(self.request('GET', '/key/key.txt')[0], 404)

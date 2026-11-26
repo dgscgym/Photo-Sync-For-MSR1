@@ -2,7 +2,7 @@
 
 面向铭凡 MINISFORUM MS-R1（此芯 P1 / ARM64）的私人照片管理与加密云备份项目。
 
-> 当前版本：**0.6.1 图形化磁盘配置原型**。已实现最大 10 GiB 分片续传、精确去重、照片/视频预览、显式 Live Photo 配对、持久化日志及 SnapRAID 只读监控 / 告警；人脸识别、NPU、加密归档和 115 同步尚未实现。下方需求描述是完整目标，不代表所有功能已完成。
+> 当前版本：**0.7.0 客户端与管理台分离原型**。已实现最大 10 GiB 分片续传、精确去重、照片/视频预览、显式 Live Photo 配对、持久化日志及 SnapRAID 只读监控 / 告警；人脸识别、NPU、加密归档和 115 同步尚未实现。下方需求描述是完整目标，不代表所有功能已完成。
 
 详见 [大视频、Live Photo 与 MS-R1 验证说明](docs/MEDIA.md)。FFmpeg 为可选依赖，软件转码尚未在 MS-R1 实机验证。
 
@@ -13,6 +13,8 @@
 [独立初始化与登录流程](docs/SETUP.md)：创建管理员 → 批量目录 → SnapRAID 接入或跳过 → 确认 → 登录；登录后才能访问照片。
 
 [SnapRAID 磁盘与模式选择](docs/SNAPRAID-DISKS.md)：选择磁盘角色与单/双/三校验，由工具生成配置。当前保存方案，首次同步尚未接入。
+
+[客户端与管理台架构](docs/ARCHITECTURE.md)：`/client` 浏览与上传，`/admin` 服务端管理，`/admin/settings/snapraid` 单独调整 SnapRAID。首次引导不参与日常设置。
 
 ## 快速启动原型
 
@@ -33,7 +35,8 @@ python3 -m unittest discover -s tests -v
 
 原型提供单管理员登录，默认只监听回环地址；远程部署需 HTTPS 反向代理及 --secure-cookies。尚未在 MS-R1 上验证。不应直接向公网开放。文件签名检查不是完整图片解码验证。
 
-- `client/`：响应式浏览器客户端，照片库、上传、预览、活动以及功能占位页面。
+- `client/`：浏览器客户端，仅照片浏览、上传与预览。
+- `server/admin/web/`：独立服务端管理台、初始化、登录与 SnapRAID 日常设置。
 - `server/`：HTTP API、SQLite 元数据、内容寻址原片存储。
 - `tests/`：并发去重、重启持久性、原片读取及请求边界测试。
 - [API 说明](docs/API.md) · [版本管理规则](docs/VERSIONING.md) · [变更记录](CHANGELOG.md)

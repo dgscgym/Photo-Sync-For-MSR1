@@ -87,14 +87,14 @@ class Auth:
             except (ValueError,TypeError):h.send(400,{'error':'无效的登录请求'});return True
             except Exception:h.send(409,{'error':'账户创建失败或请求冲突，请重试'});return True
         public=('/login','/login.js','/setup.js','/setup.css','/app.js','/style.css')
-        if path in public:return False
+        if path in public or path.startswith(('/admin/assets/','/client/assets/')) or path=='/client/login':return False
         if not self.account() and path in ('/setup','/setup/welcome'):return False
         if not self.authenticated(h):
             if path.startswith('/api/'):
                 h.send(401,{'error':'请先登录'});return True
-            h.send(302,b'',Location='/login' if self.account() else '/setup/welcome');return True
-        if not self.complete() and (path in ('/','/api/v1/status') or path.startswith('/api/v1/photos') or path.startswith('/api/v1/uploads') or path.startswith('/api/v1/previews')):
-            if path=='/':h.send(302,b'',Location='/setup/library')
+            h.send(302,b'',Location=('/client/login' if path.startswith('/client') else '/login') if self.account() else '/setup/welcome');return True
+        if not self.complete() and (path in ('/','/admin','/client','/api/v1/status','/api/v1/client/status') or path.startswith('/api/v1/photos') or path.startswith('/api/v1/uploads') or path.startswith('/api/v1/previews')):
+            if path in ('/','/admin','/client'):h.send(302,b'',Location='/setup/library')
             else:h.send(403,{'error':'请先完成初始化'})
             return True
         return False

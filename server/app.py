@@ -235,6 +235,8 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, li
                     return self.send(400, {'error':'无效的分页参数'})
             if path == '/api/v1/snapraid':
                 return self.send(200, monitor.snapshot())
+            if path == '/api/v1/client/status':
+                state=store.snapshot();return self.send(200,{key:state[key] for key in ('version','photos','stats')})
             if path == '/api/v1/status':
                 return self.send(200, store.snapshot())
             if path.startswith('/api/v1/photos/'):
@@ -247,17 +249,27 @@ def make_server(directory, host='127.0.0.1', port=8080, snapraid_config=None, li
                 if target is None:
                     return self.send(404, {'error': '照片不存在'})
                 return serve_file(self, target, photo['media_type'], self.command == 'HEAD')
-            if path=='/login':
-                return self.send(200,(ROOT/'client'/'login.html').read_bytes(),'text/html; charset=utf-8')
+            if path in ('/login','/client/login'):
+                page=(ROOT/'server/admin/web'/'login.html').read_text()
+                page=page.replace('href="/"','href="/client"' if path=='/client/login' else 'href="/admin"')
+                return self.send(200,page.encode(),'text/html; charset=utf-8')
             if path.startswith('/setup') and path in ('/setup','/setup/welcome','/setup/library','/setup/snapraid','/setup/review'):
-                return self.send(200,(ROOT/'client'/'setup.html').read_bytes(),'text/html; charset=utf-8')
-            assets = {'/login.js':('login.js','text/javascript; charset=utf-8'), '/setup.js': ('setup.js','text/javascript; charset=utf-8'),
-                      '/setup.css': ('setup.css','text/css; charset=utf-8'), '/': ('index.html', 'text/html; charset=utf-8'),
-                      '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
-                      '/style.css': ('style.css', 'text/css; charset=utf-8')}
+                return self.send(200,(ROOT/'server/admin/web'/'setup.html').read_bytes(),'text/html; charset=utf-8')
+            pages={'/admin':('server/admin/web/index.html','text/html; charset=utf-8'),
+                   '/client':('client/index.html','text/html; charset=utf-8'),
+                   '/admin/settings/snapraid':('server/admin/web/snapraid.html','text/html; charset=utf-8')}
+            if path=='/':return self.send(302,b'',Location='/admin')
+            if path in pages:
+                filename,kind=pages[path];return self.send(200,(ROOT/filename).read_bytes(),kind)
+            assets={
+                '/client/assets/app.js':('client/app.js','text/javascript; charset=utf-8'),
+                '/client/assets/style.css':('client/style.css','text/css; charset=utf-8')}
+            for filename in ('app.js','setup.js','login.js','snapraid.js','style.css','setup.css'):
+                assets['/admin/assets/'+filename]=('server/admin/web/'+filename,'text/css; charset=utf-8' if filename.endswith('.css') else 'text/javascript; charset=utf-8')
+            aliases={'/app.js':'/admin/assets/app.js','/style.css':'/admin/assets/style.css','/setup.js':'/admin/assets/setup.js','/setup.css':'/admin/assets/setup.css','/login.js':'/admin/assets/login.js'}
+            path=aliases.get(path,path)
             if path in assets:
-                filename, media_type = assets[path]
-                return self.send(200, (ROOT / 'client' / filename).read_bytes(), media_type)
+                filename,kind=assets[path];return self.send(200,(ROOT/filename).read_bytes(),kind)
             return self.send(404, {'error': '接口不存在'})
 
         def do_POST(self):
