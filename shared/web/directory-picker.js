@@ -1,8 +1,8 @@
 (() => {
- let dialog,view,preview,options,renderId=0,selectionId=0,existing=[];const selected=new Map(),pending=new Map();
+ let dialog,view,preview,options,renderId=0,selectionId=0,submitting=false,existing=[];const selected=new Map(),pending=new Map();
  const el=(tag,text)=>{const node=document.createElement(tag);if(text!==undefined)node.textContent=text;return node;};
  async function api(path,settings={}){const response=await fetch(path,settings),data=await response.json();if(!response.ok)throw new Error(data.error||'读取失败');return data;}
- function update(){const button=document.getElementById('picker-confirm');button.disabled=!selected.size||pending.size>0;button.textContent=options.sourceId?'确认重新绑定目录':`确认添加选中的目录（${selected.size}）`;}
+ function update(){const button=document.getElementById('picker-confirm');button.disabled=submitting||!selected.size||pending.size>0;button.textContent=options.sourceId?'确认重新绑定目录':`确认添加选中的目录（${selected.size}）`;}
  function create(){
   dialog=el('dialog');dialog.className='directory-picker';dialog.setAttribute('aria-label','选择相册目录并确认内容');
   const heading=el('div');heading.className='picker-heading';heading.append(el('h2','选择相册目录'));const close=el('button','关闭 ×');close.onclick=()=>dialog.close();heading.append(close);
@@ -30,7 +30,7 @@
   input.onchange=()=>choose(path,input.checked);const open=el('button','📁 '+name);open.className='picker-directory-name';open.onclick=()=>browse(path);row.append(input,open);return row;
  }
  async function browse(path='',offset=0){
-  const generation=++renderId;view.replaceChildren(el('p','读取目录中…'));update();
+  const generation=++renderId;preview.replaceChildren();view.replaceChildren(el('p','读取目录中…'));update();
   try{const data=await api('/api/v1/library/browse?'+new URLSearchParams({path,offset,directories_only:1}));if(generation!==renderId)return;view.replaceChildren();
    const tools=el('div');tools.className='picker-tools';const roots=el('button','全部授权位置');roots.onclick=()=>browse();tools.append(roots);
    if(data.path){const up=el('button','上一级');up.onclick=()=>browse(data.parent||'');tools.append(up);}view.append(tools,el('p',data.path||'勾选目录以添加，点击目录名称进入下一级。'));
@@ -42,12 +42,13 @@
   }catch(error){if(generation===renderId)view.replaceChildren(el('p',error.message));}
  }
  async function confirm(){
-  if(!selected.size||pending.size)return;const button=document.getElementById('picker-confirm');button.disabled=true;
+  if(submitting||!selected.size||pending.size)return;submitting=true;preview.replaceChildren();update();
   try{const entries=Array.from(selected.values());
    if(options.sourceId)await api('/api/v1/library/sources',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...entries[0],source_id:options.sourceId})});
    else{const sources=entries.filter(entry=>!entry.existing).map(({path,review_token})=>({path,review_token}));if(sources.length)await api('/api/v1/library/sources/batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sources})});}
    dialog.close();if(options.onSaved)await options.onSaved();
-  }catch(error){preview.prepend(el('p',error.message));update();}
+  }catch(error){preview.replaceChildren(el('p',error.message));}
+  finally{submitting=false;update();}
  }
  window.PhotoSyncDirectoryPicker={async open(settings={}){if(!dialog)create();options=settings;selected.clear();pending.clear();renderId++;selectionId++;preview.replaceChildren();dialog.showModal();update();try{existing=(await api('/api/v1/library')).sources;}catch(_){existing=[];}browse();}};
 })();
