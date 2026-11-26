@@ -2,7 +2,7 @@
 
 ## 0.12.0
 
-- 新增原生 Android 工程、Gradle Wrapper、调试 APK 构建工作流。
+- 新增原生 Android 工程、Gradle Wrapper、调试 APK 构建工作流模板（现有凭据无 workflow 权限，尚未启用）。
 - 接入客户端密码 + TOTP/恢复码、Keystore 加密会话、本机生物解锁、媒体浏览/详情/视频/Live 配对。
 - 新增本机多目录持久 URI 授权、SQLite 队列、4 MiB 分片续传、前台同步/暂停及指定 SSID 的后台定期同步。
 - 新增带账户隔离的服务端小尺寸 JPEG 缩略图，保留原片。
