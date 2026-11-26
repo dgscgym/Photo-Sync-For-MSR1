@@ -15,7 +15,7 @@
   if(options.sourceId){selected.clear();pending.clear();}
   pending.set(path,version);update();
   preview.replaceChildren();
-  try{const data=await api('/api/v1/library/browse?'+new URLSearchParams({path}));
+  try{const data=await api('/api/v1/library/browse?'+new URLSearchParams({path,directories_only:1}));
    if(pending.get(path)!==version)return;
    pending.delete(path);
    if(options.sourceId)selected.clear();
@@ -31,18 +31,13 @@
  }
  async function browse(path='',offset=0){
   const generation=++renderId;view.replaceChildren(el('p','读取目录中…'));update();
-  try{const data=await api('/api/v1/library/browse?'+new URLSearchParams({path,offset}));if(generation!==renderId)return;view.replaceChildren();
+  try{const data=await api('/api/v1/library/browse?'+new URLSearchParams({path,offset,directories_only:1}));if(generation!==renderId)return;view.replaceChildren();
    const tools=el('div');tools.className='picker-tools';const roots=el('button','全部授权位置');roots.onclick=()=>browse();tools.append(roots);
    if(data.parent){const up=el('button','上一级');up.onclick=()=>browse(data.parent);tools.append(up);}view.append(tools,el('p',data.path||'勾选目录以添加，点击目录名称进入下一级。'));
    if(!data.path){if(!data.roots.length)view.append(el('p','暂无授权位置，请在部署时映射媒体目录。'));for(const root of data.roots)view.append(directoryRow(root,root));return;}
-   view.append(directoryRow(data.path,'选择当前目录'),el('p',`目录内共 ${data.total} 项`));const list=el('div');list.className='picker-list';
-   for(const item of data.entries){
-    if(item.directory){list.append(directoryRow(item.path,item.name));continue;}
-    const row=el('div');row.className='picker-item';row.append(el('span',(item.media_type?'▧ ':'▤ ')+item.name));
-    if(item.media_type?.startsWith('image/')&&list.children.length<12){const image=el('img');image.alt=item.name;image.loading='lazy';image.src='/api/v1/library/browse-preview?'+new URLSearchParams({path:item.path});row.append(image);}
-    if(item.media_type?.startsWith('video/')){const button=el('button','预览视频');button.onclick=()=>{const video=el('video');video.controls=true;video.preload='metadata';video.src='/api/v1/library/browse-preview?'+new URLSearchParams({path:item.path});row.append(video);button.remove();};row.append(button);}
-    if(item.unavailable)row.append(el('small','不可读取'));list.append(row);
-   }view.append(list);
+   view.append(directoryRow(data.path,'选择当前目录'),el('p',`子目录 ${data.total} 个`));const list=el('div');list.className='picker-list';
+   for(const item of data.entries){if(item.directory)list.append(directoryRow(item.path,item.name));}
+   if(!data.total)list.append(el('p','没有子目录'));view.append(list);
    const pages=el('div');if(data.offset){const prev=el('button','上一页');prev.onclick=()=>browse(data.path,Math.max(0,data.offset-100));pages.append(prev);}if(data.next_offset){const next=el('button','下一页');next.onclick=()=>browse(data.path,data.next_offset);pages.append(next);}view.append(pages);
   }catch(error){if(generation===renderId)view.replaceChildren(el('p',error.message));}
  }

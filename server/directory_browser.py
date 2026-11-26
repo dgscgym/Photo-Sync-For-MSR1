@@ -30,6 +30,7 @@ def route(library,h):
         if offset<0:raise ValueError()
         token=review_token(directory)
         children=sorted([p for p in directory.iterdir() if not p.is_symlink()],key=lambda p:(not p.is_dir(),p.name.casefold()))
+        if query.get('directories_only',['0'])[0]=='1':children=[child for child in children if child.is_dir()]
         entries=[]
         for child in children[offset:offset+100]:
             try:
