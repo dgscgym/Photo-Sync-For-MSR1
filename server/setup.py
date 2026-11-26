@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 from urllib.parse import urlsplit
+from .disks import inventory, build_plan
 
 class Setup:
     def __init__(self,store,library,monitor,storage_bases=(),config_bases=(),locked=False):
@@ -22,15 +23,17 @@ class Setup:
     def snapshot(self):
         with self.store.connect() as db:
             row=db.execute("SELECT value FROM app_settings WHERE key='snapraid_setup_mode'").fetchone()
+            plan=db.execute("SELECT value FROM app_settings WHERE key='snapraid_plan'").fetchone()
         return {'library':self.library.snapshot(),'snapraid':self.monitor.snapshot(),
                 'snapraid_mode':row['value'] if row else ('connected' if self.monitor.config else 'pending'),
                 'storage_bases':[str(p) for p in self.storage], 'config_bases':[str(p) for p in self.configs],
-                'snapraid_locked':self.locked}
+                'snapraid_locked':self.locked,'disk_plan':json.loads(plan['value']) if plan else None}
 
     def route(self,h):
         path=urlsplit(h.path).path
         if not path.startswith('/api/v1/setup'):return False
         try:
+            if h.command=='GET' and path=='/api/v1/setup/disks':h.send(200,{'disks':inventory(self.storage)});return True
             if h.command=='GET' and path=='/api/v1/setup':h.send(200,self.snapshot());return True
             if h.command=='POST' and path=='/api/v1/setup/finish':
                 if h.headers.get('Sec-Fetch-Site')=='cross-site':h.send(403,{'error':'不允许跨站请求'});return True
@@ -46,8 +49,29 @@ class Setup:
                 if not 0<length<=32768:raise ValueError('请求过大')
                 data=json.loads(h.rfile.read(length))
                 if data.get('skip') is True:
-                    if self.monitor.config:raise ValueError('已配置监控不能作为未启用跳过')
+                    if self.monitor.config or self.snapshot()['disk_plan']:raise ValueError('已有方案不能作为未启用跳过')
                     mode='skipped'
+                elif 'mode' in data:
+                    if self.locked or self.monitor.config:raise ValueError('已有受管理配置不能直接更换阵列，请先完成迁移设计')
+                    plan=build_plan(data,inventory(self.storage))
+                    if data.get('preview') is True:
+                        h.send(200,plan);return True
+                    if data.get('confirmed') is not True:raise ValueError('请先预览并确认磁盘方案')
+                    with self.store.connect() as db:
+                        db.execute('BEGIN IMMEDIATE')
+                        previous=db.execute("SELECT value FROM app_settings WHERE key='snapraid_plan'").fetchone()
+                        if previous:raise ValueError('已有阵列方案，请勿覆盖；后续提供受控变更流程')
+                        directory=self.store.directory/'snapraid'
+                        directory.mkdir(exist_ok=True)
+                        target=directory/'snapraid.conf'
+                        if target.exists():raise ValueError('已有配置文件，拒绝覆盖')
+                        temporary=directory/'snapraid.conf.tmp'
+                        temporary.write_text(plan['configuration'])
+                        temporary.replace(target)
+                        db.execute("INSERT INTO app_settings VALUES('snapraid_plan',?)",(json.dumps(plan,ensure_ascii=False),))
+                        db.execute("INSERT OR REPLACE INTO app_settings VALUES('snapraid_setup_mode','planned')")
+                    self.store.log('snapraid','warning','disk_plan_saved','','磁盘方案已保存，等待首次同步',{'mode':plan['mode'],'disks':len(plan['disks'])})
+                    h.send(200,self.snapshot());return True
                 else:
                     if self.locked:raise ValueError('配置由服务端启动参数管理')
                     cfg=self.inside(data['snapraid_config'],self.configs,False)

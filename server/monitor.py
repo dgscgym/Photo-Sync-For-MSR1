@@ -66,7 +66,11 @@ class Monitor:
         data['interval_seconds'] = self.interval
         data['running'] = self.lock.locked()
         if not self.config:
-            data.update(state='unknown', message='SnapRAID 未配置，无法确认多盘保护状态')
+            with self.store.connect() as db:
+                has_settings=db.execute("SELECT 1 FROM sqlite_master WHERE name='app_settings'").fetchone()
+                plan=db.execute("SELECT 1 FROM app_settings WHERE key='snapraid_plan'").fetchone() if has_settings else None
+            if plan:data.update(state='warning',message='磁盘方案已保存，尚未首次同步，未建立校验保护')
+            else:data.update(state='unknown', message='SnapRAID 未配置，无法确认多盘保护状态')
         elif data['checked_at'] and time.time() - datetime.fromisoformat(data['checked_at']).timestamp() > self.interval * 2 + self.timeout:
             data.update(state='unknown', message='SnapRAID 检查已过期，请重新检查')
         return data
